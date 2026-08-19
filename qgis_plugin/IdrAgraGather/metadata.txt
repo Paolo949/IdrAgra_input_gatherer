@@ -1,0 +1,16 @@
+[general]
+name=IdrAgra Input Gatherer
+description=Draw a study-area box and gather raw inputs for an IdrAgra project.
+about=Workspace interface for independently acquiring and transforming weather and soil inputs, staging local data, and recording reproducible provenance. It does not export final IdrAgra input files yet.
+version=0.9.0
+qgisMinimumVersion=3.28
+qgisMaximumVersion=4.99
+author=RITA tools
+email=
+repository=https://github.com/rita-tools/IdragraTools
+homepage=https://github.com/rita-tools
+tracker=https://github.com/rita-tools/IdragraTools/issues
+category=Plugins
+experimental=True
+deprecated=False
+hasProcessingProvider=False
