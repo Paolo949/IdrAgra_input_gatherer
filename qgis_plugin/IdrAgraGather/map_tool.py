@@ -1,5 +1,5 @@
 from qgis.PyQt.QtCore import Qt, pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
-from qgis.PyQt.QtGui import QColor, QCursor, QkeyEvent # pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtGui import QColor, QCursor, QKeyEvent # pyright: ignore[reportAttributeAccessIssue]
 from qgis.core import Qgis, QgsGeometry, QgsRectangle, QgsWkbTypes
 from qgis.gui import QgsMapTool, QgsRubberBand, QgsMapMouseEvent
 
@@ -45,7 +45,7 @@ class RectangleMapTool(QgsMapTool):
             self._show_rectangle(end_point, rectangle=rectangle)
             self.rectangleCreated.emit(rectangle)
 
-    def keyPressEvent(self, e: QkeyEvent):
+    def keyPressEvent(self, e: QKeyEvent):
         if e.key() == KEY.Key_Escape:
             self.start_point = None
             self.clear()

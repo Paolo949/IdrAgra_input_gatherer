@@ -21,6 +21,9 @@ SOIL_SOURCE_LOCAL = "local"
 SOIL_DEPTHS_ALL = "all"
 SOIL_DEPTHS_TOPSOIL = "topsoil"
 
+LANDUSE_SOURCE_CORINE = "corine"
+LANDUSE_SOURCE_LOCAL = "local"
+
 
 class FilePicker(QWidget):
     def __init__(self, file_filter="All files (*.*)", parent=None):
@@ -84,7 +87,8 @@ class AcquisitionDialog(QDialog):
         form_layout.addWidget(self._build_output_group())
         form_layout.addWidget(self._build_weather_group())
         form_layout.addWidget(self._build_soil_group())
-        form_layout.addWidget(self._build_other_group())
+        form_layout.addWidget(self._build_landuse_group())
+        form_layout.addWidget(self._build_topography_group())
         form_layout.addStretch()
         scroll_area.setWidget(form)
         layout.addWidget(scroll_area, 1)
@@ -93,7 +97,9 @@ class AcquisitionDialog(QDialog):
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setPlaceholderText("Acquisition messages appear here.")
-        layout.addWidget(self.log, 1)
+        self.log.setMinimumHeight(80)
+        self.log.setMaximumHeight(150)
+        layout.addWidget(self.log)
 
         # Adds the "close" button at the
         buttons = QDialogButtonBox(STANDARD_BUTTON.Close)
@@ -103,9 +109,11 @@ class AcquisitionDialog(QDialog):
         # Sets the refresh policy of the "status" labels for specific user actions
         self.weather_source_selector.currentIndexChanged.connect(self._update_weather_file_state)
         self.soil_source_selector.currentIndexChanged.connect(self._update_soil_file_state)
+        self.landuse_source_selector.currentIndexChanged.connect(self._update_landuse_file_state)
         self.output_folder.editingFinished.connect(self.refresh_status)
         self._update_weather_file_state()
         self._update_soil_file_state()
+        self._update_landuse_file_state()
 
     def _build_aoi_group(self):
         group = QGroupBox("1. Study area")
@@ -145,20 +153,30 @@ class AcquisitionDialog(QDialog):
         self.timezone_combo.addItem("Europe/Rome (legal time included)", "Europe/Rome")
         self.timezone_combo.addItem("UTC", "UTC")
         self.weather_options = QStackedWidget()
-        era5_page = QWidget()
-        era5_layout = QFormLayout(era5_page)
         period_row = QWidget()
         period_layout = QHBoxLayout(period_row)
         period_layout.setContentsMargins(0, 0, 0, 0)
         period_layout.addWidget(self.start_date)
         period_layout.addWidget(self.end_date)
-        era5_layout.addRow("Period", period_row)
+        era5_page = QWidget()
+        era5_layout = QFormLayout(era5_page)
         era5_layout.addRow("Daily timezone", self.timezone_combo)
         eobs_page = QWidget()
         eobs_layout = QVBoxLayout(eobs_page)
-        eobs_note = QLabel("E-OBS acquisition is planned but not implemented yet.")
+        eobs_note = QLabel(
+            "Reads only the needed portions of the official 0.1° ensemble-mean "
+            "NetCDF files and saves a local AOI/date subset. "
+            "Humidity extrema are estimated from daily mean humidity and temperature."
+        )
         eobs_note.setWordWrap(True)
         eobs_layout.addWidget(eobs_note)
+        self.eobs_terms = QCheckBox(
+            "I confirm this use is non-commercial research or non-commercial education."
+        )
+        self.eobs_terms.setToolTip(
+            "Required by the ECA&D/E-OBS data policy before downloading E-OBS data."
+        )
+        eobs_layout.addWidget(self.eobs_terms)
         local_page = QWidget()
         local_layout = QFormLayout(local_page)
         local_layout.addRow("Input file", self.weather_file)
@@ -175,10 +193,12 @@ class AcquisitionDialog(QDialog):
         layout.addWidget(self.weather_status, 0, 1, 1, 3)
         layout.addWidget(QLabel("Source"), 1, 0)
         layout.addWidget(self.weather_source_selector, 1, 1, 1, 3)
-        layout.addWidget(self.weather_options, 2, 1, 1, 3)
-        layout.addWidget(self.weather_acquire_button, 3, 1)
-        layout.addWidget(self.weather_transform_button, 3, 2)
-        layout.addWidget(self.weather_both_button, 3, 3)
+        layout.addWidget(QLabel("Period"), 2, 0)
+        layout.addWidget(period_row, 2, 1, 1, 3)
+        layout.addWidget(self.weather_options, 3, 1, 1, 3)
+        layout.addWidget(self.weather_acquire_button, 4, 1)
+        layout.addWidget(self.weather_transform_button, 4, 2)
+        layout.addWidget(self.weather_both_button, 4, 3)
         return group
 
     def _build_soil_group(self):
@@ -224,18 +244,61 @@ class AcquisitionDialog(QDialog):
         layout.addWidget(note, 4, 1, 1, 3)
         return group
 
-    def _build_other_group(self):
-        group = QGroupBox("Other local inputs — stage only")
-        layout = QFormLayout(group)
-        self.landuse_file = FilePicker("Land-use data (*.gpkg *.shp *.tif *.tiff);;All files (*.*)")
-        self.topography_file = FilePicker("Elevation data (*.tif *.tiff *.vrt);;All files (*.*)")
-        layout.addRow("Land use", self.landuse_file)
-        layout.addRow("DEM", self.topography_file)
-        self.other_stage_button = QPushButton("Stage selected files")
-        self.other_stage_button.clicked.connect(
-            lambda: self.runRequested.emit("other-stage")
+    def _build_landuse_group(self):
+        group = QGroupBox("Land use")
+        layout = QGridLayout(group)
+        self.landuse_status = QLabel("Raw: not found\nNormalized: not implemented")
+        self.landuse_status.setStyleSheet("font-weight: bold;")
+        self.landuse_status.setWordWrap(True)
+        self.landuse_status.setTextInteractionFlags(
+            TEXT_INTERACTION_FLAG.TextSelectableByMouse
         )
-        layout.addRow(self.other_stage_button)
+        self.landuse_source_selector = QComboBox()
+        self.landuse_source_selector.addItem(
+            "CORINE Land Cover 2018", LANDUSE_SOURCE_CORINE
+        )
+        self.landuse_source_selector.addItem("Local file", LANDUSE_SOURCE_LOCAL)
+        self.landuse_file = FilePicker(
+            "Land-use data (*.gpkg *.shp *.tif *.tiff);;All files (*.*)"
+        )
+        self.landuse_options = QStackedWidget()
+        corine_page = QWidget()
+        corine_layout = QVBoxLayout(corine_page)
+        corine_note = QLabel(
+            "Official EEA vector data. Features intersecting the selected study area "
+            "are downloaded with their CORINE 2018 class codes."
+        )
+        corine_note.setWordWrap(True)
+        corine_layout.addWidget(corine_note)
+        local_page = QWidget()
+        local_layout = QFormLayout(local_page)
+        local_layout.addRow("Input file", self.landuse_file)
+        self.landuse_options.addWidget(corine_page)
+        self.landuse_options.addWidget(local_page)
+        self.landuse_acquire_button = QPushButton("Acquire raw")
+        self.landuse_acquire_button.clicked.connect(
+            lambda: self.runRequested.emit("landuse-acquire")
+        )
+        layout.addWidget(QLabel("Status"), 0, 0)
+        layout.addWidget(self.landuse_status, 0, 1, 1, 2)
+        layout.addWidget(QLabel("Source"), 1, 0)
+        layout.addWidget(self.landuse_source_selector, 1, 1, 1, 2)
+        layout.addWidget(self.landuse_options, 2, 1, 1, 2)
+        layout.addWidget(self.landuse_acquire_button, 3, 1)
+        return group
+
+    def _build_topography_group(self):
+        group = QGroupBox("Topography — local staging")
+        layout = QFormLayout(group)
+        self.topography_file = FilePicker(
+            "Elevation data (*.tif *.tiff *.vrt);;All files (*.*)"
+        )
+        layout.addRow("DEM", self.topography_file)
+        self.topography_stage_button = QPushButton("Stage DEM")
+        self.topography_stage_button.clicked.connect(
+            lambda: self.runRequested.emit("topography-stage")
+        )
+        layout.addRow(self.topography_stage_button)
         return group
 
     def _build_output_group(self):
@@ -283,22 +346,51 @@ class AcquisitionDialog(QDialog):
         weather_source = None
         normalize_weather = False
         if action == "weather-acquire":
-            weather_source = "era5-download" if selected_weather == WEATHER_SOURCE_ERA5 else selected_weather
-        elif action == "weather-transform" and selected_weather == WEATHER_SOURCE_ERA5:
-            weather_source = "era5-normalize"
+            weather_source = {
+                WEATHER_SOURCE_ERA5: "era5-download",
+                WEATHER_SOURCE_EOBS: "eobs-download",
+            }.get(selected_weather, selected_weather)
+        elif action == "weather-transform" and selected_weather in {
+            WEATHER_SOURCE_ERA5, WEATHER_SOURCE_EOBS
+        }:
+            weather_source = f"{selected_weather}-normalize"
             normalize_weather = True
         elif action == "weather-both":
-            weather_source = "era5-download" if selected_weather == WEATHER_SOURCE_ERA5 else selected_weather
-            normalize_weather = selected_weather == WEATHER_SOURCE_ERA5
+            weather_source = {
+                WEATHER_SOURCE_ERA5: "era5-download",
+                WEATHER_SOURCE_EOBS: "eobs-download",
+            }.get(selected_weather, selected_weather)
+            normalize_weather = selected_weather in {
+                WEATHER_SOURCE_ERA5, WEATHER_SOURCE_EOBS
+            }
+        if weather_source == "eobs-download" and not self.eobs_terms.isChecked():
+            raise ValueError(
+                "Confirm the non-commercial E-OBS terms before downloading this dataset."
+            )
         if weather_source == WEATHER_SOURCE_LOCAL and not self.weather_file.path():
             raise ValueError("Choose a local weather file or another weather source.")
         soil_source = self.soil_source_selector.currentData() if action == "soil-acquire" else None
         if soil_source == SOIL_SOURCE_LOCAL and not self.soil_file.path():
             raise ValueError("Choose a local soil file or another soil source.")
+        landuse_source = (
+            self.landuse_source_selector.currentData()
+            if action == "landuse-acquire"
+            else None
+        )
+        if landuse_source == LANDUSE_SOURCE_LOCAL and not self.landuse_file.path():
+            raise ValueError("Choose a local land-use file or select CORINE.")
+        if action == "topography-stage" and not self.topography_file.path():
+            raise ValueError("Choose a local DEM file to stage.")
         local_files = {
             "soil": self.soil_file.path() if soil_source == SOIL_SOURCE_LOCAL else "",
-            "landuse": self.landuse_file.path() if action == "other-stage" else "",
-            "topography": self.topography_file.path() if action == "other-stage" else "",
+            "landuse": (
+                self.landuse_file.path()
+                if landuse_source == LANDUSE_SOURCE_LOCAL
+                else ""
+            ),
+            "topography": (
+                self.topography_file.path() if action == "topography-stage" else ""
+            ),
         }
         if weather_source == WEATHER_SOURCE_LOCAL:
             local_files["weather"] = self.weather_file.path()
@@ -315,6 +407,7 @@ class AcquisitionDialog(QDialog):
             "timezone": self.timezone_combo.currentData(),
             "soil_source": soil_source,
             "soil_depths": self.soil_depths.currentData(),
+            "landuse_source": landuse_source,
             "local_files": local_files,
             "output": output,
             "load_results": bool(self.load_results.isChecked()),
@@ -327,16 +420,19 @@ class AcquisitionDialog(QDialog):
     def set_running(self, running):
         self.weather_source_selector.setEnabled(not running)
         self.soil_source_selector.setEnabled(not running)
+        self.landuse_source_selector.setEnabled(not running)
         for button in (
             self.weather_acquire_button,
             self.weather_transform_button,
             self.weather_both_button,
             self.soil_acquire_button,
-            self.other_stage_button,
+            self.landuse_acquire_button,
+            self.topography_stage_button,
         ):
             button.setEnabled(not running)
         if not running:
             self._update_weather_file_state()
+            self._update_landuse_file_state()
 
     def _browse_output(self):
         directory = QFileDialog.getExistingDirectory(
@@ -351,17 +447,23 @@ class AcquisitionDialog(QDialog):
     def _update_weather_file_state(self):
         source = self.weather_source_selector.currentData()
         self.weather_options.setCurrentIndex(self.weather_source_selector.currentIndex())
-        is_era5 = source == WEATHER_SOURCE_ERA5
-        can_acquire = source in {WEATHER_SOURCE_ERA5, WEATHER_SOURCE_LOCAL}
+        is_online = source in {WEATHER_SOURCE_ERA5, WEATHER_SOURCE_EOBS}
+        can_acquire = is_online or source == WEATHER_SOURCE_LOCAL
         self.weather_acquire_button.setEnabled(can_acquire)
-        self.weather_transform_button.setEnabled(is_era5)
-        self.weather_both_button.setEnabled(is_era5)
+        self.weather_transform_button.setEnabled(is_online)
+        self.weather_both_button.setEnabled(is_online)
         self.refresh_status()
 
     def _update_soil_file_state(self):
         source = self.soil_source_selector.currentData()
         self.soil_options.setCurrentIndex(self.soil_source_selector.currentIndex())
         self.soil_acquire_button.setEnabled(source in {SOIL_SOURCE_SOILGRIDS, SOIL_SOURCE_LOCAL})
+        self.refresh_status()
+
+    def _update_landuse_file_state(self):
+        self.landuse_options.setCurrentIndex(
+            self.landuse_source_selector.currentIndex()
+        )
         self.refresh_status()
 
     def refresh_status(self):
@@ -402,3 +504,23 @@ class AcquisitionDialog(QDialog):
         else:
             raw_soil_text = f"Raw: not found in {soil_raw}"
         self.soil_status.setText(raw_soil_text + "\nNormalized: not implemented")
+
+        landuse_provider = {
+            LANDUSE_SOURCE_CORINE: "corine",
+            LANDUSE_SOURCE_LOCAL: "local",
+        }[self.landuse_source_selector.currentData()]
+        landuse_raw = root / "raw" / "landuse" / landuse_provider
+        landuse_files = (
+            [path for path in landuse_raw.iterdir() if path.is_file()]
+            if landuse_raw.is_dir()
+            else []
+        )
+        if len(landuse_files) == 1:
+            raw_landuse_text = f"Raw: {landuse_files[0]}"
+        elif landuse_files:
+            raw_landuse_text = f"Raw: {len(landuse_files)} files in {landuse_raw}"
+        else:
+            raw_landuse_text = f"Raw: not found in {landuse_raw}"
+        self.landuse_status.setText(
+            raw_landuse_text + "\nNormalized: not implemented"
+        )

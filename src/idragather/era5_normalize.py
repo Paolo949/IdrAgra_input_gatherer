@@ -240,6 +240,9 @@ def write_daily_geopackage(
     latitudes: np.ndarray,
     longitudes: np.ndarray,
     daily: list[DailySlice],
+    *,
+    valid_locations: np.ndarray | None = None,
+    location_prefix: str = "era5",
 ) -> None:
     try:
         from osgeo import ogr, osr
@@ -261,23 +264,32 @@ def write_daily_geopackage(
     for field in DAILY_FIELDS:
         _add_ogr_field(layer, ogr, field, ogr.OFTReal)
 
+    if valid_locations is None:
+        valid_locations = np.ones((len(latitudes), len(longitudes)), dtype=bool)
+    elif valid_locations.shape != (len(latitudes), len(longitudes)):
+        raise ValueError("valid location mask does not match the coordinate grid")
+
     location_ids: dict[tuple[int, int], str] = {}
     for row, latitude in enumerate(latitudes):
         for column, longitude in enumerate(longitudes):
-            location_id = f"era5_{float(latitude):.4f}_{float(longitude):.4f}"
-            location_ids[(row, column)] = location_id
+            if valid_locations[row, column]:
+                location_ids[(row, column)] = (
+                    f"{location_prefix}_{float(latitude):.4f}_{float(longitude):.4f}"
+                )
     database.StartTransaction()
     try:
         for item in daily:
             for row in range(len(latitudes)):
                 for column in range(len(longitudes)):
+                    if (row, column) not in location_ids:
+                        continue
                     feature = ogr.Feature(layer.GetLayerDefn())
                     feature.SetField("date", item.day.isoformat())
                     feature.SetField("location_id", location_ids[(row, column)])
                     for field in DAILY_FIELDS:
                         feature.SetField(field, float(item.values[field][row, column]))
                     geometry = ogr.Geometry(ogr.wkbPoint)
-                    geometry.AddPoint(
+                    geometry.AddPoint_2D(
                         float(longitudes[column]), float(latitudes[row])
                     )
                     feature.SetGeometry(geometry)

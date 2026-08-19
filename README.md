@@ -23,14 +23,15 @@ The workspace lets the user:
 
 1. drag a rectangle on the current map or use the canvas extent;
 2. choose a weather period;
-3. preview an ERA5-Land request plan without credentials;
-4. save the AOI and ERA5 request plan, or perform the actual download;
+3. acquire ERA5-Land through CDS or E-OBS from the official KNMI files;
+4. save the AOI and source-specific raw weather subsets;
 5. optionally transform hourly ERA5-Land data into the seven daily IdrAgra
    weather fields using `Europe/Rome` civil time;
 6. optionally stage local weather, soil, land-use, and elevation files;
 7. download AOI-clipped SoilGrids mean texture and bulk-density coverages;
-8. run weather acquisition and transformation independently or consecutively;
-9. load raw layers into collapsed, hidden-by-default category groups such as
+8. download CORINE Land Cover 2018 polygons intersecting the AOI as GeoJSON;
+9. run weather acquisition and transformation independently or consecutively;
+10. load raw layers into collapsed, hidden-by-default category groups such as
    `weather_raw` and `soil_raw`.
 
 Source-specific controls use stacked pages: choosing ERA5-Land shows its period
@@ -41,8 +42,9 @@ to outputs returned by the action that has just completed; it does not scan and
 load every pre-existing file in the staging folder.
 
 ERA5 download mode requires `cdsapi` in QGIS's Python environment and valid CDS
-credentials. Start with **plan only**, which exercises the complete interface
-and staging workflow without either requirement.
+credentials. E-OBS does not require credentials. It uses GDAL HTTP range reads
+to save only the requested AOI/date subset from the much larger official
+NetCDF files, and requires confirmation of the E-OBS non-commercial-use terms.
 
 ## Why the weather schema looks this way
 
@@ -70,8 +72,12 @@ sampling/interpolation rules are known.
 - a versioned `manifest.json` with checksums and acquisition provenance;
 - generation and validation of an editable normalized weather CSV;
 - post-download ERA5-Land normalization into `weather_daily_points.gpkg`;
+- HTTP-range-subset E-OBS acquisition and normalization into the same canonical
+  `weather_daily_points.gpkg` schema;
 - clipped ISRIC SoilGrids WCS downloads for `sand`, `silt`, `clay`, and `bdod`
   at either three topsoil or all six standard depth intervals;
+- AOI-filtered CORINE Land Cover 2018 vector acquisition from the EEA ArcGIS
+  REST service, retaining the published `Code_18` classification;
 - an installable QGIS dialog with rectangle drawing, planning, background
   acquisition, and result-layer loading.
 
@@ -115,9 +121,11 @@ study_inputs/
   manifest.json
   raw/
     weather/era5_land/*.nc
+    weather/eobs/*.nc
     weather/local/*
     soil/local/*
     soil/soilgrids/*.tif
+    landuse/corine/clc2018.geojson
     landuse/local/*
     topography/local/*
   weather/
@@ -126,11 +134,17 @@ study_inputs/
 ```
 
 The GeoPackage contains one `weather_daily_points` layer. Each row represents
-one ERA5 grid centre on one date and contains the date, location ID, point
+one weather grid centre on one date and contains the date, location ID, point
 geometry, and seven IdrAgra weather variables. Repeating the small point
 geometry makes the layer directly filterable, editable, styleable, and usable
 with QGIS temporal tools. Edge-hour substitutions and other warnings are
 written to the task log and manifest rather than stored as data columns.
+
+For E-OBS, wind is converted from 10 m to 2 m and daily mean radiation is
+converted to MJ/m²/day. E-OBS publishes only daily mean relative humidity, so
+`rhmin_pct` and `rhmax_pct` are estimated from mean humidity, Tmin, and Tmax
+using a constant actual-vapour-pressure approximation. The estimation is
+recorded in the manifest and task warnings.
 
 SoilGrids files are kept in their published integer units. Divide sand, silt,
 and clay by 10 for percent; divide `bdod` by 100 for kg/dm³ (equivalent in

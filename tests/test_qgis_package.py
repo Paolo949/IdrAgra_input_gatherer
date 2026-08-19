@@ -18,11 +18,14 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/__init__.py", names)
             self.assertIn("IdrAgraGather/plugin.py", names)
             self.assertIn("IdrAgraGather/core/providers/era5_land.py", names)
+            self.assertIn("IdrAgraGather/core/providers/eobs.py", names)
             self.assertIn("IdrAgraGather/core/providers/soilgrids.py", names)
+            self.assertIn("IdrAgraGather/core/providers/corine.py", names)
             self.assertIn("IdrAgraGather/core/era5_normalize.py", names)
+            self.assertIn("IdrAgraGather/core/eobs_normalize.py", names)
             self.assertIn("qgisMinimumVersion=3.28", metadata)
             self.assertIn("qgisMaximumVersion=4.99", metadata)
-            self.assertIn("version=0.9.0", metadata)
+            self.assertIn("version=0.10.0", metadata)
             self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))
 
     def test_qgis4_removed_enum_aliases_are_not_used(self):
@@ -41,12 +44,21 @@ class QgisPackageTests(unittest.TestCase):
             "Qgis.Success",
         ):
             self.assertNotIn(removed_alias, source)
+        self.assertNotIn("QkeyEvent", source)
+        self.assertIn("QKeyEvent", source)
 
     def test_workspace_has_scoped_actions_and_collapsed_raw_groups(self):
         plugin_root = Path(__file__).resolve().parents[1] / "qgis_plugin" / "IdrAgraGather"
         dialog = (plugin_root / "dialog.py").read_text(encoding="utf-8")
         plugin = (plugin_root / "plugin.py").read_text(encoding="utf-8")
-        for action in ("weather-acquire", "weather-transform", "weather-both", "soil-acquire"):
+        for action in (
+            "weather-acquire",
+            "weather-transform",
+            "weather-both",
+            "soil-acquire",
+            "landuse-acquire",
+            "topography-stage",
+        ):
             self.assertIn(action, dialog)
         self.assertIn('return f"{parts[index + 1]}_raw", True', plugin)
         self.assertIn("target_group.setExpanded(not is_raw)", plugin)
@@ -54,7 +66,8 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("Add outputs from completed actions to QGIS", dialog)
         self.assertIn("Refresh detected files", dialog)
         self.assertIn("ISRIC SoilGrids", dialog)
-        self.assertIn('self.weather_combo.addItem("E-OBS", "eobs")', dialog)
+        self.assertIn("CORINE Land Cover 2018", dialog)
+        self.assertIn("WEATHER_SOURCE_EOBS", dialog)
 
 
 if __name__ == "__main__":

@@ -17,14 +17,23 @@ from qgis.core import (
 )
 
 from .core.era5_normalize import normalize_era5_files
+from .core.eobs_normalize import normalize_eobs_files
 from .core.models import BoundingBox, DateWindow
+from .core.providers.corine import fetch as fetch_corine
 from .core.providers.era5_land import fetch, plan_jobs, write_plan
+from .core.providers.eobs import fetch as fetch_eobs
+from .core.providers.eobs import plan_jobs as plan_eobs_jobs
 from .core.providers.soilgrids import DEPTHS as SOIL_DEPTHS
 from .core.providers.soilgrids import PROPERTIES as SOIL_PROPERTIES
 from .core.providers.soilgrids import fetch as fetch_soilgrids
 from .core.providers.soilgrids import plan_jobs as plan_soilgrids_jobs
 from .core.staging import StagingArea
-from .dialog import AcquisitionDialog, SOIL_DEPTHS_TOPSOIL, SOIL_SOURCE_SOILGRIDS
+from .dialog import (
+    AcquisitionDialog,
+    LANDUSE_SOURCE_CORINE,
+    SOIL_DEPTHS_TOPSOIL,
+    SOIL_SOURCE_SOILGRIDS,
+)
 from .map_tool import RectangleMapTool
 
 
@@ -110,6 +119,60 @@ def _run_acquisition(task, request):
             task.setProgress(96)
         else:
             load_paths.extend(weather_outputs)
+    elif source in {"eobs-download", "eobs-normalize"}:
+        report_status = request.get("status_callback")
+
+        def eobs_progress(done, total, _path):
+            task.setProgress(5 + 80 * done / total)
+
+        def eobs_status(message):
+            if report_status is not None:
+                report_status("E-OBS: " + message)
+
+        if source == "eobs-download":
+            weather_outputs = fetch_eobs(
+                request["output"],
+                bbox,
+                window,
+                is_cancelled=task.isCanceled,
+                on_progress=eobs_progress,
+                on_status=eobs_status,
+            )
+        else:
+            weather_dir = Path(request["output"]) / "raw" / "weather" / "eobs"
+            expected = plan_eobs_jobs(bbox, window)
+            weather_outputs = [weather_dir / job.target_name for job in expected]
+            missing = [path for path in weather_outputs if not path.is_file()]
+            if missing:
+                raise ValueError(
+                    "No complete staged E-OBS subset was found for this exact AOI and "
+                    "date window. Run Acquire raw or Acquire + transform first."
+                )
+            eobs_status(f"Found {len(weather_outputs)} staged NetCDF file(s).")
+
+        outputs.extend(weather_outputs)
+        if request.get("normalize_weather", True) and not task.isCanceled():
+            task.setProgress(max(task.progress(), 88))
+
+            def eobs_normalization_status(message):
+                if report_status is not None:
+                    report_status("Normalize: " + message)
+
+            normalized = normalize_eobs_files(
+                weather_outputs,
+                request["output"],
+                bbox,
+                window,
+                on_status=eobs_normalization_status,
+            )
+            outputs.append(normalized.path)
+            load_paths.append(normalized.path)
+            if report_status is not None:
+                for warning in normalized.warnings:
+                    report_status("WARNING: " + warning)
+            task.setProgress(96)
+        else:
+            load_paths.extend(weather_outputs)
     if task.isCanceled():
         return {"cancelled": True, "outputs": [str(path) for path in outputs]}
 
@@ -131,6 +194,26 @@ def _run_acquisition(task, request):
         )
         outputs.extend(soil_outputs)
         load_paths.extend(soil_outputs)
+
+    if request.get("landuse_source") == LANDUSE_SOURCE_CORINE:
+        report_status = request.get("status_callback")
+
+        def landuse_progress(done, total, _path):
+            task.setProgress(max(task.progress(), 95 + 4 * done / total))
+
+        def landuse_status(message):
+            if report_status is not None:
+                report_status("CORINE: " + message)
+
+        landuse_outputs = fetch_corine(
+            request["output"],
+            bbox,
+            is_cancelled=task.isCanceled,
+            on_progress=landuse_progress,
+            on_status=landuse_status,
+        )
+        outputs.extend(landuse_outputs)
+        load_paths.extend(landuse_outputs)
     
     for category, source_path in request["local_files"].items():
         if source_path:
