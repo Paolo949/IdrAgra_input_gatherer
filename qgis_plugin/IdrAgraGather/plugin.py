@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from qgis.PyQt.QtCore import QDir, QObject, QSettings, pyqtSignal
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
+from qgis.PyQt.QtCore import QDir, QObject, QSettings, pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtWidgets import QAction, QMessageBox # pyright: ignore[reportAttributeAccessIssue]
 from qgis.core import (
     Qgis,
     QgsApplication,
@@ -24,7 +24,7 @@ from .core.providers.soilgrids import PROPERTIES as SOIL_PROPERTIES
 from .core.providers.soilgrids import fetch as fetch_soilgrids
 from .core.providers.soilgrids import plan_jobs as plan_soilgrids_jobs
 from .core.staging import StagingArea
-from .dialog import AcquisitionDialog
+from .dialog import AcquisitionDialog, SOIL_DEPTHS_TOPSOIL, SOIL_SOURCE_SOILGRIDS
 from .map_tool import RectangleMapTool
 
 
@@ -113,9 +113,9 @@ def _run_acquisition(task, request):
     if task.isCanceled():
         return {"cancelled": True, "outputs": [str(path) for path in outputs]}
 
-    if request.get("soil_source") == "soilgrids":
+    if request.get("soil_source") == SOIL_SOURCE_SOILGRIDS:
         report_status = request.get("status_callback")
-        depths = SOIL_DEPTHS[:3] if request.get("soil_depths") == "topsoil" else SOIL_DEPTHS
+        depths = SOIL_DEPTHS[:3] if request.get("soil_depths") == SOIL_DEPTHS_TOPSOIL else SOIL_DEPTHS
 
         def soil_progress(done, total, _path):
             task.setProgress(max(task.progress(), 96 + 3 * done / total))

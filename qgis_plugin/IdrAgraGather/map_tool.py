@@ -1,5 +1,5 @@
-from qgis.PyQt.QtCore import Qt, pyqtSignal
-from qgis.PyQt.QtGui import QColor, QCursor, QkeyEvent
+from qgis.PyQt.QtCore import Qt, pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtGui import QColor, QCursor, QkeyEvent # pyright: ignore[reportAttributeAccessIssue]
 from qgis.core import Qgis, QgsGeometry, QgsRectangle, QgsWkbTypes
 from qgis.gui import QgsMapTool, QgsRubberBand, QgsMapMouseEvent
 

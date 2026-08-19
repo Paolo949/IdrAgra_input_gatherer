@@ -1,32 +1,25 @@
 from pathlib import Path
 
-from qgis.PyQt.QtCore import QDate, Qt, pyqtSignal
-from qgis.PyQt.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDateEdit,
-    QDialog,
-    QDialogButtonBox,
-    QFileDialog,
-    QFormLayout,
-    QGridLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QPlainTextEdit,
-    QPushButton,
-    QScrollArea,
-    QStackedWidget,
-    QVBoxLayout,
-    QWidget,
-) 
+from qgis.PyQt.QtCore import QDate, Qt, pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog,       # pyright: ignore[reportAttributeAccessIssue]
+                                 QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,           # pyright: ignore[reportAttributeAccessIssue]
+                                 QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)# pyright: ignore[reportAttributeAccessIssue]
 
 
 # PyQt6 scopes enums which PyQt5 also exposed directly on their classes.
 WINDOW_TYPE = getattr(Qt, "WindowType", Qt)
 STANDARD_BUTTON = getattr(QDialogButtonBox, "StandardButton", QDialogButtonBox)
 TEXT_INTERACTION_FLAG = getattr(Qt, "TextInteractionFlag", Qt)
+
+WEATHER_SOURCE_ERA5 = "era5"
+WEATHER_SOURCE_EOBS = "eobs"
+WEATHER_SOURCE_LOCAL = "local"
+
+SOIL_SOURCE_SOILGRIDS = "soilgrids"
+SOIL_SOURCE_LOCAL = "local"
+
+SOIL_DEPTHS_ALL = "all"
+SOIL_DEPTHS_TOPSOIL = "topsoil"
 
 
 class FilePicker(QWidget):
@@ -102,12 +95,14 @@ class AcquisitionDialog(QDialog):
         self.log.setPlaceholderText("Acquisition messages appear here.")
         layout.addWidget(self.log, 1)
 
+        # Adds the "close" button at the
         buttons = QDialogButtonBox(STANDARD_BUTTON.Close)
         buttons.rejected.connect(self.close)
         layout.addWidget(buttons)
 
-        self.weather_combo.currentIndexChanged.connect(self._update_weather_file_state)
-        self.soil_combo.currentIndexChanged.connect(self._update_soil_file_state)
+        # Sets the refresh policy of the "status" labels for specific user actions
+        self.weather_source_selector.currentIndexChanged.connect(self._update_weather_file_state)
+        self.soil_source_selector.currentIndexChanged.connect(self._update_soil_file_state)
         self.output_folder.editingFinished.connect(self.refresh_status)
         self._update_weather_file_state()
         self._update_soil_file_state()
@@ -135,11 +130,10 @@ class AcquisitionDialog(QDialog):
         self.weather_status.setStyleSheet("font-weight: bold;")
         self.weather_status.setWordWrap(True)
         self.weather_status.setTextInteractionFlags(TEXT_INTERACTION_FLAG.TextSelectableByMouse)
-        self.weather_combo = QComboBox()
-        self.weather_combo.addItem("ERA5-Land", "era5")
-        self.weather_combo.addItem("E-OBS", "eobs")
-        self.weather_combo.addItem("Local file", "local")
-        self.weather_combo.addItem("None", "none")
+        self.weather_source_selector = QComboBox()
+        self.weather_source_selector.addItem("ERA5-Land", WEATHER_SOURCE_ERA5)
+        self.weather_source_selector.addItem("E-OBS", WEATHER_SOURCE_EOBS)
+        self.weather_source_selector.addItem("Local file", WEATHER_SOURCE_LOCAL)
         self.weather_file = FilePicker("Weather data (*.nc *.csv *.txt);;All files (*.*)")
         today = QDate.currentDate()
         self.start_date = QDateEdit(QDate(today.year(), 1, 1))
@@ -168,11 +162,9 @@ class AcquisitionDialog(QDialog):
         local_page = QWidget()
         local_layout = QFormLayout(local_page)
         local_layout.addRow("Input file", self.weather_file)
-        none_page = QWidget()
         self.weather_options.addWidget(era5_page)
         self.weather_options.addWidget(eobs_page)
         self.weather_options.addWidget(local_page)
-        self.weather_options.addWidget(none_page)
         self.weather_acquire_button = QPushButton("Acquire raw")
         self.weather_transform_button = QPushButton("Transform existing")
         self.weather_both_button = QPushButton("Acquire + transform")
@@ -182,7 +174,7 @@ class AcquisitionDialog(QDialog):
         layout.addWidget(QLabel("Status"), 0, 0)
         layout.addWidget(self.weather_status, 0, 1, 1, 3)
         layout.addWidget(QLabel("Source"), 1, 0)
-        layout.addWidget(self.weather_combo, 1, 1, 1, 3)
+        layout.addWidget(self.weather_source_selector, 1, 1, 1, 3)
         layout.addWidget(self.weather_options, 2, 1, 1, 3)
         layout.addWidget(self.weather_acquire_button, 3, 1)
         layout.addWidget(self.weather_transform_button, 3, 2)
@@ -196,13 +188,12 @@ class AcquisitionDialog(QDialog):
         self.soil_status.setStyleSheet("font-weight: bold;")
         self.soil_status.setWordWrap(True)
         self.soil_status.setTextInteractionFlags(TEXT_INTERACTION_FLAG.TextSelectableByMouse)
-        self.soil_combo = QComboBox()
-        self.soil_combo.addItem("ISRIC SoilGrids", "soilgrids")
-        self.soil_combo.addItem("Local file", "local")
-        self.soil_combo.addItem("None", "none")
+        self.soil_source_selector = QComboBox()
+        self.soil_source_selector.addItem("ISRIC SoilGrids", SOIL_SOURCE_SOILGRIDS)
+        self.soil_source_selector.addItem("Local file", SOIL_SOURCE_LOCAL)
         self.soil_depths = QComboBox()
-        self.soil_depths.addItem("All six standard depths (0–200 cm)", "all")
-        self.soil_depths.addItem("Topsoil only (0–30 cm)", "topsoil")
+        self.soil_depths.addItem("All six standard depths (0–200 cm)", SOIL_DEPTHS_ALL)
+        self.soil_depths.addItem("Topsoil only (0–30 cm)", SOIL_DEPTHS_TOPSOIL)
         self.soil_file = FilePicker("Soil data (*.gpkg *.shp *.tif *.tiff);;All files (*.*)")
         self.soil_options = QStackedWidget()
         soilgrids_page = QWidget()
@@ -211,10 +202,8 @@ class AcquisitionDialog(QDialog):
         local_soil_page = QWidget()
         local_soil_layout = QFormLayout(local_soil_page)
         local_soil_layout.addRow("Input file", self.soil_file)
-        no_soil_page = QWidget()
         self.soil_options.addWidget(soilgrids_page)
         self.soil_options.addWidget(local_soil_page)
-        self.soil_options.addWidget(no_soil_page)
         self.soil_acquire_button = QPushButton("Acquire raw")
         self.soil_transform_button = QPushButton("Transform existing")
         self.soil_both_button = QPushButton("Acquire + transform")
@@ -225,7 +214,7 @@ class AcquisitionDialog(QDialog):
         layout.addWidget(QLabel("Status"), 0, 0)
         layout.addWidget(self.soil_status, 0, 1, 1, 3)
         layout.addWidget(QLabel("Source"), 1, 0)
-        layout.addWidget(self.soil_combo, 1, 1, 1, 3)
+        layout.addWidget(self.soil_source_selector, 1, 1, 1, 3)
         layout.addWidget(self.soil_options, 2, 1, 1, 3)
         layout.addWidget(self.soil_acquire_button, 3, 1)
         layout.addWidget(self.soil_transform_button, 3, 2)
@@ -290,28 +279,28 @@ class AcquisitionDialog(QDialog):
         if self.start_date.date() > self.end_date.date():
             raise ValueError("The start date is after the end date.")
 
-        selected_weather = self.weather_combo.currentData()
-        weather_source = "none"
+        selected_weather = self.weather_source_selector.currentData()
+        weather_source = None
         normalize_weather = False
         if action == "weather-acquire":
-            weather_source = "era5-download" if selected_weather == "era5" else selected_weather
-        elif action == "weather-transform" and selected_weather == "era5":
+            weather_source = "era5-download" if selected_weather == WEATHER_SOURCE_ERA5 else selected_weather
+        elif action == "weather-transform" and selected_weather == WEATHER_SOURCE_ERA5:
             weather_source = "era5-normalize"
             normalize_weather = True
         elif action == "weather-both":
-            weather_source = "era5-download" if selected_weather == "era5" else selected_weather
-            normalize_weather = selected_weather == "era5"
-        if weather_source == "local" and not self.weather_file.path():
+            weather_source = "era5-download" if selected_weather == WEATHER_SOURCE_ERA5 else selected_weather
+            normalize_weather = selected_weather == WEATHER_SOURCE_ERA5
+        if weather_source == WEATHER_SOURCE_LOCAL and not self.weather_file.path():
             raise ValueError("Choose a local weather file or another weather source.")
-        soil_source = self.soil_combo.currentData() if action == "soil-acquire" else "none"
-        if soil_source == "local" and not self.soil_file.path():
+        soil_source = self.soil_source_selector.currentData() if action == "soil-acquire" else None
+        if soil_source == SOIL_SOURCE_LOCAL and not self.soil_file.path():
             raise ValueError("Choose a local soil file or another soil source.")
         local_files = {
-            "soil": self.soil_file.path() if soil_source == "local" else "",
+            "soil": self.soil_file.path() if soil_source == SOIL_SOURCE_LOCAL else "",
             "landuse": self.landuse_file.path() if action == "other-stage" else "",
             "topography": self.topography_file.path() if action == "other-stage" else "",
         }
-        if weather_source == "local":
+        if weather_source == WEATHER_SOURCE_LOCAL:
             local_files["weather"] = self.weather_file.path()
         for category, path in local_files.items():
             if path and not Path(path).is_file():
@@ -336,8 +325,8 @@ class AcquisitionDialog(QDialog):
         self.log.appendPlainText(str(message))
 
     def set_running(self, running):
-        self.weather_combo.setEnabled(not running)
-        self.soil_combo.setEnabled(not running)
+        self.weather_source_selector.setEnabled(not running)
+        self.soil_source_selector.setEnabled(not running)
         for button in (
             self.weather_acquire_button,
             self.weather_transform_button,
@@ -360,29 +349,28 @@ class AcquisitionDialog(QDialog):
             self.refresh_status()
 
     def _update_weather_file_state(self):
-        source = self.weather_combo.currentData()
-        self.weather_options.setCurrentIndex(self.weather_combo.currentIndex())
-        is_era5 = source == "era5"
-        can_acquire = source in {"era5", "local"}
+        source = self.weather_source_selector.currentData()
+        self.weather_options.setCurrentIndex(self.weather_source_selector.currentIndex())
+        is_era5 = source == WEATHER_SOURCE_ERA5
+        can_acquire = source in {WEATHER_SOURCE_ERA5, WEATHER_SOURCE_LOCAL}
         self.weather_acquire_button.setEnabled(can_acquire)
         self.weather_transform_button.setEnabled(is_era5)
         self.weather_both_button.setEnabled(is_era5)
         self.refresh_status()
 
     def _update_soil_file_state(self):
-        source = self.soil_combo.currentData()
-        self.soil_options.setCurrentIndex(self.soil_combo.currentIndex())
-        self.soil_acquire_button.setEnabled(source in {"soilgrids", "local"})
+        source = self.soil_source_selector.currentData()
+        self.soil_options.setCurrentIndex(self.soil_source_selector.currentIndex())
+        self.soil_acquire_button.setEnabled(source in {SOIL_SOURCE_SOILGRIDS, SOIL_SOURCE_LOCAL})
         self.refresh_status()
 
     def refresh_status(self):
         root = Path(self.output_folder.text().strip())
         weather_provider = {
-            "era5": "era5_land",
-            "eobs": "eobs",
-            "local": "local",
-            "none": "none",
-        }.get(self.weather_combo.currentData(), "none")
+            WEATHER_SOURCE_ERA5: "era5_land",
+            WEATHER_SOURCE_EOBS: "eobs",
+            WEATHER_SOURCE_LOCAL: "local",
+        }[self.weather_source_selector.currentData()]
         weather_raw = root / "raw" / "weather" / weather_provider
         weather_files = [path for path in weather_raw.iterdir() if path.is_file()] if weather_raw.is_dir() else []
         weather_count = len(weather_files)
@@ -401,10 +389,9 @@ class AcquisitionDialog(QDialog):
         self.weather_status.setText(raw_weather_text + "\n" + normalized_weather_text)
 
         soil_provider = {
-            "soilgrids": "soilgrids",
-            "local": "local",
-            "none": "none",
-        }.get(self.soil_combo.currentData(), "none")
+            SOIL_SOURCE_SOILGRIDS: "soilgrids",
+            SOIL_SOURCE_LOCAL: "local",
+        }[self.soil_source_selector.currentData()]
         soil_raw = root / "raw" / "soil" / soil_provider
         soil_files = [path for path in soil_raw.iterdir() if path.is_file()] if soil_raw.is_dir() else []
         soil_count = len(soil_files)
