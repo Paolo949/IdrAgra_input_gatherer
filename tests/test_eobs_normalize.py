@@ -5,6 +5,7 @@ import numpy as np
 
 from idragather.eobs_normalize import (
     RADIATION_W_M2_TO_MJ_M2_DAY,
+    _common_date_window,
     _complete_location_mask,
     _spatial_indices,
     _to_canonical_daily,
@@ -12,9 +13,17 @@ from idragather.eobs_normalize import (
 )
 from idragather.era5_normalize import DAILY_FIELDS, WIND_10M_TO_2M
 from idragather.models import BoundingBox, DateWindow
+from idragather.providers.eobs import VARIABLES
 
 
 class EobsNormalizeTests(unittest.TestCase):
+    def test_common_coverage_rejects_internal_calendar_gaps(self):
+        first = date(2026, 1, 1)
+        third = date(2026, 1, 3)
+        dates = {name: {first, third} for name in VARIABLES}
+        with self.assertRaisesRegex(ValueError, "internal missing day"):
+            _common_date_window(dates, context="in test data")
+
     def test_packed_netcdf_values_apply_scale_and_preserve_missing_values(self):
         class Dimension:
             def __init__(self, name):

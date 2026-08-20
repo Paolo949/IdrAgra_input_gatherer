@@ -306,8 +306,16 @@ def write_daily_geopackage(
     finally:
         database = None
 
-    path.unlink(missing_ok=True)
-    temporary.replace(path)
+    try:
+        path.unlink(missing_ok=True)
+        temporary.replace(path)
+    except PermissionError as exc:
+        temporary.unlink(missing_ok=True)
+        raise RuntimeError(
+            "Could not replace the normalized weather GeoPackage because it is "
+            "open in QGIS or another application. Remove any layer using "
+            f"{path}, close other programs that have it open, and try again."
+        ) from exc
 
 
 def _add_ogr_field(layer, ogr, name, field_type, *, width: int | None = None) -> None:

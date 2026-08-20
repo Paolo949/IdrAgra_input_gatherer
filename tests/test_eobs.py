@@ -4,7 +4,7 @@ import tempfile
 import unittest
 
 from idragather.models import BoundingBox, DateWindow
-from idragather.providers.eobs import VARIABLES, fetch, plan_jobs
+from idragather.providers.eobs import VARIABLES, fetch, find_staged_files, plan_jobs
 
 
 class EobsProviderTests(unittest.TestCase):
@@ -52,6 +52,18 @@ class EobsProviderTests(unittest.TestCase):
             manifest = (Path(temporary) / "manifest.json").read_text(encoding="utf-8")
             self.assertIn('"provider": "eobs-knmi"', manifest)
             self.assertIn('"requested_bbox"', manifest)
+
+    def test_transform_can_reuse_provisional_cohort_with_changed_end_date(self):
+        def subsetter(_job, target, _bbox, _window, _is_cancelled):
+            target.write_bytes(b"netcdf placeholder")
+
+        bbox = BoundingBox(9.3, 46.1, 9.5, 46.2)
+        acquired = DateWindow(date(2026, 1, 1), date(2026, 8, 20))
+        changed = DateWindow(date(2026, 1, 1), date(2026, 8, 30))
+        with tempfile.TemporaryDirectory() as temporary:
+            outputs = fetch(temporary, bbox, acquired, subsetter=subsetter)
+            staged = find_staged_files(temporary, bbox, changed)
+            self.assertEqual(set(staged), set(outputs))
 
 
 if __name__ == "__main__":

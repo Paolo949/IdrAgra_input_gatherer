@@ -31,8 +31,23 @@ The workspace lets the user:
 7. download AOI-clipped SoilGrids mean texture and bulk-density coverages;
 8. download CORINE Land Cover 2018 polygons intersecting the AOI as GeoJSON;
 9. run weather acquisition and transformation independently or consecutively;
-10. load raw layers into collapsed, hidden-by-default category groups such as
-   `weather_raw` and `soil_raw`.
+10. load raw layers into collapsed, visible category groups such as `weather_raw`
+   and `soil_raw`; numeric rasters use a first-band pseudocolor stretch so time
+   bands are not mistaken for RGB channels. Geographic NetCDF grids are detected
+   from their longitude/latitude axes and assigned WGS 84 automatically. If a
+   subset has lost its pixel geotransform, the plugin creates a lightweight VRT
+   display wrapper under `.qgis_previews`; QGIS then reprojects it to the project
+   CRS on the fly without modifying the acquired source file.
+
+The gathered-inputs group is kept at the top of the project layer tree. Reloading
+the workspace AOI replaces its prior map layer instead of adding a duplicate.
+Transforming weather when a normalized GeoPackage already exists asks for
+confirmation first and releases any loaded QGIS layer before replacing the file.
+For running-year E-OBS data, acquisition reports the date interval actually
+available across all six variables. Normalization uses that common interval and
+records a warning when the provisional files end before the requested date.
+Changing the dialog end date does not lose the staged acquisition: compatible
+files are resolved from manifest provenance instead of an exact filename hash.
 
 Source-specific controls use stacked pages: choosing ERA5-Land shows its period
 and timezone, while choosing a local source shows only its file picker. Status

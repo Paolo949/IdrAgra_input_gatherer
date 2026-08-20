@@ -44,8 +44,8 @@ def normalize_eobs_files(
     if on_status is not None:
         on_status(f"Reading and subsetting {len(paths)} E-OBS NetCDF file(s).")
 
-    raw, latitudes, longitudes = read_eobs_daily(paths, bbox, window)
-    daily = _to_canonical_daily(raw, window)
+    raw, latitudes, longitudes, available_window = read_eobs_daily(paths, bbox, window)
+    daily = _to_canonical_daily(raw, available_window)
     for item in daily:
         unavailable = [
             field for field in DAILY_FIELDS if not np.any(np.isfinite(item.values[field]))
@@ -63,13 +63,20 @@ def normalize_eobs_files(
             "inside the selected study area."
         )
 
-    warnings = (
+    warnings = []
+    if available_window != window:
+        warnings.append(
+            "E-OBS provisional data do not cover the full requested interval "
+            f"{window.start} to {window.end}; normalized the common available "
+            f"interval {available_window.start} to {available_window.end}."
+        )
+    warnings.extend((
         "E-OBS provides daily mean relative humidity only; rhmin_pct and "
         "rhmax_pct were estimated from RHmean, Tmin, and Tmax using a "
         "constant-actual-vapour-pressure approximation.",
         "E-OBS is land-only; grid points with any missing requested daily value "
         "were excluded from the normalized layer.",
-    )
+    ))
     output = Path(output_root).resolve() / "weather" / OUTPUT_NAME
     output.parent.mkdir(parents=True, exist_ok=True)
     if on_status is not None:
@@ -94,22 +101,25 @@ def normalize_eobs_files(
         source="; ".join(str(path) for path in paths),
         request={
             "bbox": bbox.as_dict(),
-            "date_window": window.as_dict(),
+            "requested_date_window": window.as_dict(),
+            "date_window": available_window.as_dict(),
             "fields": list(DAILY_FIELDS),
             "wind_height_conversion": "FAO-56 logarithmic 10 m to 2 m",
             "radiation_conversion": "daily mean W/m2 multiplied by 0.0864",
             "humidity_extrema": "estimated from RHmean, Tmin, Tmax",
-            "warnings": list(warnings),
+            "warnings": warnings,
         },
     )
-    return NormalizationResult(output, warnings, location_count, len(daily))
+    return NormalizationResult(output, tuple(warnings), location_count, len(daily))
 
 
 def read_eobs_daily(
     paths: Iterable[Path],
     bbox: BoundingBox,
     window: DateWindow,
-) -> tuple[dict[str, dict[date, np.ndarray]], np.ndarray, np.ndarray]:
+) -> tuple[
+    dict[str, dict[date, np.ndarray]], np.ndarray, np.ndarray, DateWindow
+]:
     try:
         from osgeo import gdal
     except ImportError as exc:
@@ -171,15 +181,52 @@ def read_eobs_daily(
 
     if output_latitudes is None or output_longitudes is None:
         raise ValueError("none of the E-OBS files cover the requested date window")
-    expected_dates = set(_days(window))
+    available_window = _common_date_window(
+        {name: set(values[name]) for name in VARIABLES},
+        context="in the requested window",
+    )
+    return values, output_latitudes, output_longitudes, available_window
+
+
+def common_date_coverage(paths: Iterable[str | Path]) -> DateWindow:
+    """Return the date interval present in every staged E-OBS variable."""
+    try:
+        from osgeo import gdal
+    except ImportError as exc:
+        raise RuntimeError("E-OBS coverage inspection requires GDAL in QGIS") from exc
+
+    gdal.UseExceptions()
+    dates_by_variable: dict[str, set[date]] = {name: set() for name in VARIABLES}
+    for item in paths:
+        path = Path(item)
+        dataset = gdal.OpenEx(str(path), gdal.OF_MULTIDIM_RASTER)
+        if dataset is None or dataset.GetRootGroup() is None:
+            raise ValueError(f"GDAL could not inspect E-OBS NetCDF: {path}")
+        root = dataset.GetRootGroup()
+        variable_name = _variable_from_root(root, path)
+        raw_time, time_variable = _read_coordinate_with_array(root, "time")
+        dates_by_variable[variable_name].update(
+            _decode_cf_dates(raw_time, time_variable.GetUnit())
+        )
+    return _common_date_window(dates_by_variable, context="in the staged files")
+
+
+def _common_date_window(
+    dates_by_variable: dict[str, set[date]], *, context: str
+) -> DateWindow:
+    common = set.intersection(*(dates_by_variable[name] for name in VARIABLES))
+    if not common:
+        raise ValueError(f"the E-OBS variables have no common dates {context}")
+    window = DateWindow(min(common), max(common))
+    expected = set(_days(window))
     for variable_name in VARIABLES:
-        missing = sorted(expected_dates - set(values[variable_name]))
+        missing = sorted(expected - dates_by_variable[variable_name])
         if missing:
             raise ValueError(
-                f"E-OBS {variable_name.upper()} is missing {len(missing)} requested day(s); "
-                f"first missing date: {missing[0]}"
+                f"E-OBS {variable_name.upper()} has {len(missing)} internal missing "
+                f"day(s); first missing date: {missing[0]}"
             )
-    return values, output_latitudes, output_longitudes
+    return window
 
 
 def _to_canonical_daily(
@@ -187,6 +234,9 @@ def _to_canonical_daily(
 ) -> list[DailySlice]:
     result: list[DailySlice] = []
     for day in _days(window):
+
+        # Reconstructs daily minimum and maximum humidity using FAO-56's approach (equation 19)
+        # Todo: note that this reconstruction would be much more accurate if hourly temperature was avaialable; integrating E-OBS with ERA5's hourly temperature could be a future improvement.
         tmin = raw["tn"][day]
         tmax = raw["tx"][day]
         rhmean = raw["hu"][day]
@@ -195,6 +245,7 @@ def _to_canonical_daily(
         actual = (rhmean / 100.0) * (saturation_min + saturation_max) / 2.0
         rhmax = np.clip(100.0 * actual / saturation_min, 0.0, 100.0)
         rhmin = np.clip(100.0 * actual / saturation_max, 0.0, 100.0)
+
         result.append(
             DailySlice(
                 day,
@@ -204,8 +255,7 @@ def _to_canonical_daily(
                     "rhmax_pct": rhmax,
                     "rhmin_pct": rhmin,
                     "wind2m_m_s": raw["fg"][day] * WIND_10M_TO_2M,
-                    "solar_rad_mj_m2_day": raw["qq"][day]
-                    * RADIATION_W_M2_TO_MJ_M2_DAY,
+                    "solar_rad_mj_m2_day": raw["qq"][day] * RADIATION_W_M2_TO_MJ_M2_DAY,
                     "precip_mm": raw["rr"][day],
                 },
             )

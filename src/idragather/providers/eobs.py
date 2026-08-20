@@ -177,6 +177,65 @@ def fetch(
     return outputs
 
 
+def find_staged_files(
+    output_root: str | Path,
+    bbox: BoundingBox,
+    window: DateWindow,
+) -> list[Path]:
+    """Find one complete staged E-OBS acquisition for an AOI and period set.
+
+    Local filenames include the original request window, but normalization may
+    legitimately choose a different end date after a provisional source is
+    updated. The manifest is the authoritative way to identify a coherent set.
+    """
+    root = Path(output_root).resolve()
+    required = {(job.variable, job.period) for job in plan_jobs(bbox, window)}
+    cohorts: dict[tuple[str, str], dict[tuple[str, str], Path]] = {}
+    recorded: dict[tuple[str, str], str] = {}
+    for asset in Manifest(root).read().get("assets", []):
+        if asset.get("provider") != "eobs-knmi":
+            continue
+        request = asset.get("request") or {}
+        requested_bbox = request.get("requested_bbox") or {}
+        coordinate_names = ("west", "south", "east", "north")
+        if requested_bbox.get("crs") != "EPSG:4326" or any(
+            name not in requested_bbox
+            or abs(float(requested_bbox[name]) - getattr(bbox, name)) > 1e-9
+            for name in coordinate_names
+        ):
+            continue
+        requested_window = request.get("requested_window") or {}
+        start = requested_window.get("start")
+        end = requested_window.get("end")
+        if not start or not end:
+            continue
+        # A staged acquisition must at least overlap the desired interval. The
+        # normalizer will determine the dates actually present in provisional files.
+        if end < window.start.isoformat() or start > window.end.isoformat():
+            continue
+        key = (start, end)
+        pair = (request.get("variable"), request.get("period"))
+        path = root / asset["path"]
+        if pair in required and path.is_file():
+            cohorts.setdefault(key, {})[pair] = path
+            recorded[key] = max(recorded.get(key, ""), asset.get("recorded_at", ""))
+
+    complete = [key for key, files in cohorts.items() if required <= set(files)]
+    if not complete:
+        raise ValueError(
+            "No complete staged E-OBS acquisition was found for this AOI and "
+            "set of source periods. Run Acquire raw or Acquire + transform first."
+        )
+    # Prefer the cohort with the greatest overlap, then the most recently recorded.
+    def rank(key):
+        start = max(date.fromisoformat(key[0]), window.start)
+        end = min(date.fromisoformat(key[1]), window.end)
+        return ((end - start).days + 1, recorded[key])
+
+    selected = max(complete, key=rank)
+    return [cohorts[selected][pair] for pair in sorted(required)]
+
+
 def _subset_remote_job(
     job: EobsJob,
     target: Path,
