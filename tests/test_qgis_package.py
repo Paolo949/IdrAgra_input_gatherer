@@ -21,6 +21,8 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/core/providers/eobs.py", names)
             self.assertIn("IdrAgraGather/core/providers/soilgrids.py", names)
             self.assertIn("IdrAgraGather/core/providers/corine.py", names)
+            self.assertIn("IdrAgraGather/core/corine_normalize.py", names)
+            self.assertIn("IdrAgraGather/core/vector_clip.py", names)
             self.assertIn("IdrAgraGather/core/era5_normalize.py", names)
             self.assertIn("IdrAgraGather/core/eobs_normalize.py", names)
             self.assertIn("IdrAgraGather/core/soilgrids_normalize.py", names)
@@ -60,6 +62,8 @@ class QgisPackageTests(unittest.TestCase):
             "soil-transform",
             "soil-both",
             "landuse-acquire",
+            "landuse-transform",
+            "landuse-both",
             "topography-stage",
         ):
             self.assertIn(action, dialog)
@@ -95,6 +99,11 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("normalize_soilgrids_files", plugin)
         self.assertIn("ensure_soilgrids_raster_crs(path)", plugin)
         self.assertIn("CORINE Land Cover 2018", dialog)
+        self.assertIn("normalize_corine_file", plugin)
+        self.assertIn('QgsCategorizedSymbolRenderer("landuse", categories)', plugin)
+        self.assertIn('{".gpkg", ".sqlite", ".shp"}', plugin)
+        self.assertIn("self._style_normalized_landuse_layer(layer, path)", plugin)
+        self.assertIn('"normalize_landuse"', dialog)
         self.assertIn("WEATHER_SOURCE_EOBS", dialog)
 
 

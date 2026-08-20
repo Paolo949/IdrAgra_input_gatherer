@@ -28,6 +28,8 @@ from qgis.core import (
     QgsVectorLayer,
 )
 
+from .core.corine_normalize import find_staged_file as find_staged_corine_file
+from .core.corine_normalize import normalize_corine_file
 from .core.era5_normalize import normalize_era5_files
 from .core.eobs_normalize import common_date_coverage, normalize_eobs_files
 from .core.models import BoundingBox, DateWindow
@@ -54,6 +56,7 @@ MESSAGE_LEVEL = getattr(Qgis, "MessageLevel", Qgis)
 MESSAGE_BUTTON = getattr(QMessageBox, "StandardButton", QMessageBox)
 NORMALIZED_WEATHER_NAME = "weather_daily_points.gpkg"
 NORMALIZED_SOIL_NAME = "soil_profiles.gpkg"
+NORMALIZED_LANDUSE_NAME = "landuse.shp"
 
 
 class AcquisitionReporter(QObject):
@@ -230,6 +233,7 @@ def _run_acquisition(task, request):
         normalized_soil = normalize_soilgrids_files(
             soil_outputs,
             request["output"],
+            bbox=bbox,
             max_classes=request.get("soil_max_classes", 20),
             on_status=soil_normalization_status,
         )
@@ -245,6 +249,7 @@ def _run_acquisition(task, request):
             )
         task.setProgress(99)
 
+    landuse_outputs = []
     if request.get("landuse_source") == LANDUSE_SOURCE_CORINE:
         report_status = request.get("status_callback")
 
@@ -263,7 +268,30 @@ def _run_acquisition(task, request):
             on_status=landuse_status,
         )
         outputs.extend(landuse_outputs)
-        load_paths.extend(landuse_outputs)
+        if not request.get("normalize_landuse"):
+            load_paths.extend(landuse_outputs)
+
+    if task.isCanceled():
+        return {"cancelled": True, "outputs": [str(path) for path in outputs]}
+
+    if request.get("normalize_landuse"):
+        report_status = request.get("status_callback")
+        if not landuse_outputs:
+            landuse_outputs = [find_staged_corine_file(request["output"])]
+
+        def landuse_normalization_status(message):
+            if report_status is not None:
+                report_status("Normalize land use: " + message)
+
+        normalized_landuse = normalize_corine_file(
+            landuse_outputs[0],
+            request["output"],
+            bbox=bbox,
+            on_status=landuse_normalization_status,
+        )
+        outputs.append(normalized_landuse.path)
+        load_paths.append(normalized_landuse.path)
+        task.setProgress(99)
     
     for category, source_path in request["local_files"].items():
         if source_path:
@@ -422,6 +450,30 @@ class IdrAgraGatherPlugin:
                     )
                     QCoreApplication.processEvents()
 
+        if request.get("normalize_landuse"):
+            normalized_path = Path(request["output"]) / "landuse" / NORMALIZED_LANDUSE_NAME
+            if normalized_path.exists():
+                answer = QMessageBox.question(
+                    self.iface.mainWindow(),
+                    "Replace normalized land-use data?",
+                    "A normalized land-use dataset already exists:\n\n"
+                    f"{normalized_path}\n\n"
+                    "Replace it with the result of this transformation?",
+                    MESSAGE_BUTTON.Yes | MESSAGE_BUTTON.No,
+                    MESSAGE_BUTTON.No,
+                )
+                if answer != MESSAGE_BUTTON.Yes:
+                    self.dialog.append_log(
+                        "Transformation cancelled; existing normalized land-use data kept."
+                    )
+                    return
+                removed = self._remove_project_layers_for_path(normalized_path)
+                if removed:
+                    self.dialog.append_log(
+                        f"Removed {removed} loaded normalized land-use layer(s) before overwrite."
+                    )
+                    QCoreApplication.processEvents()
+
         QSettings().setValue("IdrAgraGather/output", request["output"])
         self.dialog.set_running(True)
         self.dialog.append_log(f"Task started: {action}.")
@@ -478,14 +530,15 @@ class IdrAgraGatherPlugin:
     def _load_spatial_file(self, path):
         if path.suffix.lower() == ".nc":
             return self._load_netcdf_sublayers(path)
-        if path.suffix.lower() in {".gpkg", ".sqlite"}:
+        if path.suffix.lower() in {".gpkg", ".sqlite", ".shp"}:
             return self._load_vector_sublayers(path)
-        if path.suffix.lower() in {".geojson", ".shp"}:
+        if path.suffix.lower() == ".geojson":
             if path.stem.lower() == "aoi":
                 self._remove_project_layers_for_path(path)
             layer = QgsVectorLayer(str(path), path.stem, "ogr")
             if layer.isValid():
                 self._style_aoi_layer(layer, path)
+                self._style_normalized_landuse_layer(layer, path)
                 self._add_layer(layer, path)
                 return 1
         if path.suffix.lower() in {".tif", ".tiff", ".vrt", ".asc"}:
@@ -500,7 +553,11 @@ class IdrAgraGatherPlugin:
         return 0
 
     def _load_vector_sublayers(self, path):
-        details = QgsProviderRegistry.instance().querySublayers(str(path))
+        # Forward slashes avoid provider-specific interpretation of backslashes
+        # in Windows paths, particularly for Shapefiles with spaces in a parent
+        # directory name.
+        vector_uri = Path(path).resolve().as_posix()
+        details = QgsProviderRegistry.instance().querySublayers(vector_uri)
         options = QgsProviderSublayerDetails.LayerOptions(
             QgsProject.instance().transformContext()
         )
@@ -510,8 +567,22 @@ class IdrAgraGatherPlugin:
             if layer is not None and layer.isValid():
                 layer.setName(f"{path.stem} — {detail.name()}")
                 self._style_normalized_soil_layer(layer, path)
+                self._style_normalized_landuse_layer(layer, path)
                 self._add_layer(layer, path)
                 loaded += 1
+        # Some older provider builds do not advertise a Shapefile as a
+        # sublayer even though OGR can open it normally.
+        if loaded == 0 and Path(path).suffix.lower() == ".shp":
+            layer = QgsVectorLayer(vector_uri, Path(path).stem, "ogr")
+            if layer.isValid():
+                self._style_normalized_landuse_layer(layer, path)
+                self._add_layer(layer, path)
+                return 1
+            if self.dialog is not None:
+                provider_error = layer.error().summary() or "OGR returned no details"
+                self.dialog.append_log(
+                    f"WARNING: QGIS could not load vector output {path}: {provider_error}"
+                )
         return loaded
 
     @staticmethod
@@ -530,6 +601,24 @@ class IdrAgraGatherPlugin:
             values, symbol, QgsRandomColorRamp()
         )
         layer.setRenderer(QgsCategorizedSymbolRenderer("profile_id", categories))
+        layer.triggerRepaint()
+
+    @staticmethod
+    def _style_normalized_landuse_layer(layer, path):
+        """Categorize normalized CORINE polygons by their readable class."""
+        if Path(path).name.lower() != NORMALIZED_LANDUSE_NAME:
+            return
+        field_index = layer.fields().indexFromName("landuse")
+        if field_index < 0:
+            return
+        values = sorted(layer.uniqueValues(field_index), key=str)
+        symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+        if symbol is None:
+            return
+        categories = QgsCategorizedSymbolRenderer.createCategories(
+            values, symbol, QgsRandomColorRamp()
+        )
+        layer.setRenderer(QgsCategorizedSymbolRenderer("landuse", categories))
         layer.triggerRepaint()
 
     def _load_netcdf_sublayers(self, path):

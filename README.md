@@ -32,8 +32,9 @@ The workspace lets the user:
    and bulk-density coverages for the complete 0–200 cm profile;
 8. normalize SoilGrids into editable full-profile polygons without applying a PTF;
 9. download CORINE Land Cover 2018 polygons intersecting the AOI as GeoJSON;
-10. run acquisition and normalization independently or consecutively;
-11. load raw layers into collapsed, visible category groups such as `weather_raw`
+10. normalize CORINE codes into readable, categorized land-use polygons;
+11. run acquisition and normalization independently or consecutively;
+12. load raw layers into collapsed, visible category groups such as `weather_raw`
    and `soil_raw`; numeric rasters use a first-band pseudocolor stretch so time
    bands are not mistaken for RGB channels. Geographic NetCDF grids are detected
    from their longitude/latitude axes and assigned WGS 84 automatically. If a
@@ -97,6 +98,8 @@ sampling/interpolation rules are known.
   attribute profile attached to each polygon and no PTF-derived values;
 - AOI-filtered CORINE Land Cover 2018 vector acquisition from the EEA ArcGIS
   REST service, retaining the published `Code_18` classification;
+- CORINE normalization into an AOI-clipped minimal `landuse.shp`, categorized
+  by the official readable level-three class name;
 - an installable QGIS dialog with rectangle drawing, planning, background
   acquisition, and result-layer loading.
 
@@ -152,6 +155,8 @@ study_inputs/
     weather_daily_points.gpkg
   soil/
     soil_profiles.gpkg
+  landuse/
+    landuse.shp (+ Shapefile sidecars)
 ```
 
 The GeoPackage contains one `weather_daily_points` layer. Each row represents
@@ -190,7 +195,8 @@ depth and contains:
 Cells missing any input in any horizon are excluded initially. Every NoData
 cell in the acquired AOI raster is then filled from the nearest valid soil
 class, including corridors connected to the raster boundary, so the polygon
-layer covers the full AOI. PTF
+layer covers the full AOI. The polygonized raster-cell boundary is then clipped
+to the exact selected AOI rectangle. PTF
 application is intentionally a later transformation: it can add hydraulic
 columns to this layer or create a separate IdrAgra-ready soil dataset before
 final export.
@@ -198,6 +204,15 @@ final export.
 When loaded by the plugin, `soil_profiles` is styled with stable categorical
 colors keyed by `profile_id`. The colors look shuffled but are deterministic,
 so a given profile ID keeps the same color when the layer is reloaded.
+
+CORINE normalization preserves the raw `clc2018.geojson` for provenance and
+creates `landuse/landuse.shp`, clipped to the exact selected AOI rectangle. The
+normalized layer contains the Shapefile/OGR
+feature ID plus only one user attribute, `landuse`, whose value is the official
+readable [CORINE level-three category](https://land.copernicus.eu/content/corine-land-cover-nomenclature-guidelines/html/)
+(for example, `Rice fields`). The numeric
+`Code_18`, source identifiers, remarks, and source area estimate are intentionally
+not duplicated. QGIS styles the normalized polygons categorically by `landuse`.
 
 ## Intended QGIS boundary
 

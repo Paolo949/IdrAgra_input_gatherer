@@ -7,7 +7,9 @@ from typing import Callable, Iterable, Mapping
 import numpy as np
 
 from .manifest import Manifest
+from .models import BoundingBox
 from .providers.soilgrids import DEPTHS, PROPERTIES, ensure_raster_crs
+from .vector_clip import aoi_geometry
 
 
 OUTPUT_NAME = "soil_profiles.gpkg"
@@ -174,6 +176,7 @@ def normalize_soilgrids_files(
     source_paths: Iterable[str | Path],
     output_root: str | Path,
     *,
+    bbox: BoundingBox | None = None,
     max_classes: int = DEFAULT_MAX_CLASSES,
     fill_nodata: bool = True,
     on_status: Callable[[str], None] | None = None,
@@ -196,7 +199,9 @@ def normalize_soilgrids_files(
             f"{len(normalized.profiles)} soil class(es); filled "
             f"{normalized.filled_nodata_cells} NoData cell(s)."
         )
-    polygon_count = _write_geopackage(output, normalized, geotransform, projection)
+    polygon_count = _write_geopackage(
+        output, normalized, geotransform, projection, bbox=bbox
+    )
 
     Manifest(Path(output_root)).add_asset(
         output,
@@ -230,6 +235,7 @@ def normalize_soilgrids_files(
                 else "exclude cells incomplete in any property or horizon"
             ),
             "filled_nodata_cells": normalized.filled_nodata_cells,
+            "clip_aoi": bbox.as_dict() if bbox is not None else None,
             "ptf_applied": False,
         },
     )
@@ -424,7 +430,7 @@ def _read_rasters(paths: tuple[Path, ...]):
     return raw, masks, reference_transform, reference_projection
 
 
-def _write_geopackage(path, normalized, geotransform, projection):
+def _write_geopackage(path, normalized, geotransform, projection, *, bbox=None):
     try:
         from osgeo import gdal, ogr, osr
     except ImportError as exc:
@@ -472,11 +478,33 @@ def _write_geopackage(path, normalized, geotransform, projection):
     if gdal.Polygonize(zone_band, mask_band, layer, profile_index, []) != 0:
         raise RuntimeError("GDAL failed to polygonize normalized SoilGrids profiles")
 
+    clip_geometry = (
+        aoi_geometry(bbox, spatial_reference, ogr, osr) if bbox is not None else None
+    )
     database.StartTransaction()
     polygon_count = 0
     try:
         layer.ResetReading()
         for feature in layer:
+            geometry = feature.GetGeometryRef()
+            if clip_geometry is not None:
+                geometry = geometry.Intersection(clip_geometry)
+                if geometry is None or geometry.IsEmpty():
+                    if layer.DeleteFeature(feature.GetFID()) != 0:
+                        raise RuntimeError("failed to remove a soil polygon outside the AOI")
+                    continue
+            else:
+                geometry = geometry.Clone()
+            geometry_type = ogr.GT_Flatten(geometry.GetGeometryType())
+            if geometry_type == ogr.wkbPolygon:
+                polygon_parts = [geometry]
+            elif geometry_type == ogr.wkbMultiPolygon:
+                polygon_parts = [
+                    geometry.GetGeometryRef(index).Clone()
+                    for index in range(geometry.GetGeometryCount())
+                ]
+            else:
+                raise RuntimeError("clipping produced a non-polygon soil geometry")
             profile_id = int(feature.GetField("profile_id"))
             row = normalized.profiles[profile_id - 1]
             for horizon, (top, bottom) in enumerate(DEPTH_BOUNDS, start=1):
@@ -484,9 +512,18 @@ def _write_geopackage(path, normalized, geotransform, projection):
                 feature.SetField(f"h{horizon}_bottom_cm", bottom)
             for field, value in zip(normalized.fields, row):
                 feature.SetField(field, float(value))
+            feature.SetGeometry(polygon_parts[0])
             if layer.SetFeature(feature) != 0:
                 raise RuntimeError("failed to attach soil attributes to a polygon")
             polygon_count += 1
+            for polygon in polygon_parts[1:]:
+                split_feature = ogr.Feature(layer.GetLayerDefn())
+                split_feature.SetFrom(feature)
+                split_feature.SetGeometry(polygon)
+                if layer.CreateFeature(split_feature) != 0:
+                    raise RuntimeError("failed to write a clipped soil polygon part")
+                split_feature = None
+                polygon_count += 1
         database.CommitTransaction()
         database.ExecuteSQL(
             "CREATE INDEX IF NOT EXISTS soil_profiles_profile_id ON soil_profiles (profile_id)"

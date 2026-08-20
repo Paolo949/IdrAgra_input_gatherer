@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from idragather.models import BoundingBox
 from idragather.providers.soilgrids import DEPTHS, PROPERTIES
 from idragather.soilgrids_normalize import (
     find_staged_files,
@@ -130,7 +131,8 @@ class SoilGridsNormalizeTests(unittest.TestCase):
                     dataset = None
                     paths.append(path)
 
-            result = normalize_soilgrids_files(paths, temporary)
+            clip = BoundingBox(9.005, 44.992, 9.015, 44.998)
+            result = normalize_soilgrids_files(paths, temporary, bbox=clip)
             self.assertEqual(result.profile_count, 2)
             self.assertEqual(result.polygon_count, 2)
             self.assertEqual(result.exact_profile_count, 2)
@@ -144,13 +146,21 @@ class SoilGridsNormalizeTests(unittest.TestCase):
             }
             self.assertIn("h1_oc_pct", fields)
             self.assertIn("h6_bd_g_cm3", fields)
-            self.assertTrue(all(feature.GetGeometryRef().GetArea() > 0 for feature in layer))
+            for feature in layer:
+                geometry = feature.GetGeometryRef()
+                self.assertGreater(geometry.GetArea(), 0)
+                west, east, south, north = geometry.GetEnvelope()
+                self.assertGreaterEqual(west, clip.west)
+                self.assertLessEqual(east, clip.east)
+                self.assertGreaterEqual(south, clip.south)
+                self.assertLessEqual(north, clip.north)
             database = None
             manifest = json.loads((Path(temporary) / "manifest.json").read_text())
             request = manifest["assets"][0]["request"]
             self.assertEqual(request["classification"]["maximum_classes"], 20)
             self.assertEqual(request["classification"]["output_class_count"], 2)
             self.assertEqual(request["filled_nodata_cells"], 0)
+            self.assertEqual(request["clip_aoi"], clip.as_dict())
 
             merged = normalize_soilgrids_files(paths, temporary, max_classes=1)
             self.assertEqual(merged.profile_count, 1)

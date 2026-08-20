@@ -256,7 +256,7 @@ class AcquisitionDialog(QDialog):
     def _build_landuse_group(self):
         group = QGroupBox("Land use")
         layout = QGridLayout(group)
-        self.landuse_status = QLabel("Raw: not found\nNormalized: not implemented")
+        self.landuse_status = QLabel("Raw: not found\nNormalized: not found")
         self.landuse_status.setStyleSheet("font-weight: bold;")
         self.landuse_status.setWordWrap(True)
         self.landuse_status.setTextInteractionFlags(
@@ -275,7 +275,8 @@ class AcquisitionDialog(QDialog):
         corine_layout = QVBoxLayout(corine_page)
         corine_note = QLabel(
             "Official EEA vector data. Features intersecting the selected study area "
-            "are downloaded with their CORINE 2018 class codes."
+            "are downloaded with their CORINE 2018 class codes. Transformation "
+            "replaces those codes with readable level-three land-use categories."
         )
         corine_note.setWordWrap(True)
         corine_layout.addWidget(corine_note)
@@ -285,15 +286,19 @@ class AcquisitionDialog(QDialog):
         self.landuse_options.addWidget(corine_page)
         self.landuse_options.addWidget(local_page)
         self.landuse_acquire_button = QPushButton("Acquire raw")
-        self.landuse_acquire_button.clicked.connect(
-            lambda: self.runRequested.emit("landuse-acquire")
-        )
+        self.landuse_transform_button = QPushButton("Transform existing")
+        self.landuse_both_button = QPushButton("Acquire + transform")
+        self.landuse_acquire_button.clicked.connect(lambda: self.runRequested.emit("landuse-acquire"))
+        self.landuse_transform_button.clicked.connect(lambda: self.runRequested.emit("landuse-transform"))
+        self.landuse_both_button.clicked.connect(lambda: self.runRequested.emit("landuse-both"))
         layout.addWidget(QLabel("Status"), 0, 0)
-        layout.addWidget(self.landuse_status, 0, 1, 1, 2)
+        layout.addWidget(self.landuse_status, 0, 1, 1, 3)
         layout.addWidget(QLabel("Source"), 1, 0)
-        layout.addWidget(self.landuse_source_selector, 1, 1, 1, 2)
-        layout.addWidget(self.landuse_options, 2, 1, 1, 2)
+        layout.addWidget(self.landuse_source_selector, 1, 1, 1, 3)
+        layout.addWidget(self.landuse_options, 2, 1, 1, 3)
         layout.addWidget(self.landuse_acquire_button, 3, 1)
+        layout.addWidget(self.landuse_transform_button, 3, 2)
+        layout.addWidget(self.landuse_both_button, 3, 3)
         return group
 
     def _build_topography_group(self):
@@ -385,11 +390,15 @@ class AcquisitionDialog(QDialog):
             raise ValueError("Automatic soil normalization currently supports ISRIC SoilGrids only.")
         if soil_source == SOIL_SOURCE_LOCAL and not self.soil_file.path():
             raise ValueError("Choose a local soil file or another soil source.")
+        selected_landuse = self.landuse_source_selector.currentData()
         landuse_source = (
-            self.landuse_source_selector.currentData()
-            if action == "landuse-acquire"
+            selected_landuse
+            if action in {"landuse-acquire", "landuse-both"}
             else None
         )
+        normalize_landuse = action in {"landuse-transform", "landuse-both"}
+        if normalize_landuse and selected_landuse != LANDUSE_SOURCE_CORINE:
+            raise ValueError("Automatic land-use normalization currently supports CORINE only.")
         if landuse_source == LANDUSE_SOURCE_LOCAL and not self.landuse_file.path():
             raise ValueError("Choose a local land-use file or select CORINE.")
         if action == "topography-stage" and not self.topography_file.path():
@@ -422,6 +431,7 @@ class AcquisitionDialog(QDialog):
             "normalize_soil": normalize_soil,
             "soil_max_classes": int(self.soil_max_classes.value()),
             "landuse_source": landuse_source,
+            "normalize_landuse": normalize_landuse,
             "local_files": local_files,
             "output": output,
             "load_results": bool(self.load_results.isChecked()),
@@ -444,6 +454,8 @@ class AcquisitionDialog(QDialog):
             self.soil_transform_button,
             self.soil_both_button,
             self.landuse_acquire_button,
+            self.landuse_transform_button,
+            self.landuse_both_button,
             self.topography_stage_button,
         ):
             button.setEnabled(not running)
@@ -483,9 +495,14 @@ class AcquisitionDialog(QDialog):
         self.refresh_status()
 
     def _update_landuse_file_state(self):
+        source = self.landuse_source_selector.currentData()
         self.landuse_options.setCurrentIndex(
             self.landuse_source_selector.currentIndex()
         )
+        self.landuse_acquire_button.setEnabled(source in {LANDUSE_SOURCE_CORINE, LANDUSE_SOURCE_LOCAL})
+        can_normalize = source == LANDUSE_SOURCE_CORINE
+        self.landuse_transform_button.setEnabled(can_normalize)
+        self.landuse_both_button.setEnabled(can_normalize)
         self.refresh_status()
 
     def refresh_status(self):
@@ -549,6 +566,10 @@ class AcquisitionDialog(QDialog):
             raw_landuse_text = f"Raw: {len(landuse_files)} files in {landuse_raw}"
         else:
             raw_landuse_text = f"Raw: not found in {landuse_raw}"
-        self.landuse_status.setText(
-            raw_landuse_text + "\nNormalized: not implemented"
+        normalized_landuse = root / "landuse" / "landuse.shp"
+        normalized_landuse_text = (
+            f"Normalized: {normalized_landuse}"
+            if normalized_landuse.is_file()
+            else f"Normalized: not found at {normalized_landuse}"
         )
+        self.landuse_status.setText(raw_landuse_text + "\n" + normalized_landuse_text)
