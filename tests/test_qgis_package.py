@@ -23,6 +23,7 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/core/providers/corine.py", names)
             self.assertIn("IdrAgraGather/core/era5_normalize.py", names)
             self.assertIn("IdrAgraGather/core/eobs_normalize.py", names)
+            self.assertIn("IdrAgraGather/core/soilgrids_normalize.py", names)
             self.assertIn("qgisMinimumVersion=3.28", metadata)
             self.assertIn("qgisMaximumVersion=4.99", metadata)
             self.assertIn("version=0.10.0", metadata)
@@ -56,6 +57,8 @@ class QgisPackageTests(unittest.TestCase):
             "weather-transform",
             "weather-both",
             "soil-acquire",
+            "soil-transform",
+            "soil-both",
             "landuse-acquire",
             "topography-stage",
         ):
@@ -65,6 +68,11 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("target_group.setItemVisibilityChecked(True)", plugin)
         self.assertIn("isinstance(layer, QgsRasterLayer)", plugin)
         self.assertIn("QgsSingleBandPseudoColorRenderer", plugin)
+        self.assertIn("QgsCategorizedSymbolRenderer", plugin)
+        self.assertIn('_style_normalized_soil_layer(layer, path)', plugin)
+        self.assertIn('QgsCategorizedSymbolRenderer("profile_id", categories)', plugin)
+        self.assertIn("QgsCategorizedSymbolRenderer.createCategories", plugin)
+        self.assertIn("QgsRandomColorRamp", plugin)
         self.assertIn("_georeference_netcdf_raster", plugin)
         self.assertIn('QgsCoordinateReferenceSystem("EPSG:4326")', plugin)
         self.assertIn('preview_dir = Path(path).parent / ".qgis_previews"', plugin)
@@ -79,6 +87,13 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("Add outputs from completed actions to QGIS", dialog)
         self.assertIn("Refresh detected files", dialog)
         self.assertIn("ISRIC SoilGrids", dialog)
+        self.assertNotIn("Topsoil only", dialog)
+        self.assertIn("all six SoilGrids horizons", dialog)
+        self.assertIn("Maximum soil classes", dialog)
+        self.assertIn('"soil_max_classes"', dialog)
+        self.assertIn('max_classes=request.get("soil_max_classes", 20)', plugin)
+        self.assertIn("normalize_soilgrids_files", plugin)
+        self.assertIn("ensure_soilgrids_raster_crs(path)", plugin)
         self.assertIn("CORINE Land Cover 2018", dialog)
         self.assertIn("WEATHER_SOURCE_EOBS", dialog)
 

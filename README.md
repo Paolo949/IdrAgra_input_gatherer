@@ -28,10 +28,12 @@ The workspace lets the user:
 5. optionally transform hourly ERA5-Land data into the seven daily IdrAgra
    weather fields using `Europe/Rome` civil time;
 6. optionally stage local weather, soil, land-use, and elevation files;
-7. download AOI-clipped SoilGrids mean texture and bulk-density coverages;
-8. download CORINE Land Cover 2018 polygons intersecting the AOI as GeoJSON;
-9. run weather acquisition and transformation independently or consecutively;
-10. load raw layers into collapsed, visible category groups such as `weather_raw`
+7. download AOI-clipped SoilGrids mean texture, coarse-fragment, organic-carbon,
+   and bulk-density coverages for the complete 0–200 cm profile;
+8. normalize SoilGrids into editable full-profile polygons without applying a PTF;
+9. download CORINE Land Cover 2018 polygons intersecting the AOI as GeoJSON;
+10. run acquisition and normalization independently or consecutively;
+11. load raw layers into collapsed, visible category groups such as `weather_raw`
    and `soil_raw`; numeric rasters use a first-band pseudocolor stretch so time
    bands are not mistaken for RGB channels. Geographic NetCDF grids are detected
    from their longitude/latitude axes and assigned WGS 84 automatically. If a
@@ -89,8 +91,10 @@ sampling/interpolation rules are known.
 - post-download ERA5-Land normalization into `weather_daily_points.gpkg`;
 - HTTP-range-subset E-OBS acquisition and normalization into the same canonical
   `weather_daily_points.gpkg` schema;
-- clipped ISRIC SoilGrids WCS downloads for `sand`, `silt`, `clay`, and `bdod`
-  at either three topsoil or all six standard depth intervals;
+- clipped ISRIC SoilGrids WCS downloads for `sand`, `silt`, `clay`, `cfvo`,
+  `soc`, and `bdod` at all six standard depth intervals;
+- SoilGrids normalization into `soil_profiles.gpkg`, with a complete six-horizon
+  attribute profile attached to each polygon and no PTF-derived values;
 - AOI-filtered CORINE Land Cover 2018 vector acquisition from the EEA ArcGIS
   REST service, retaining the published `Code_18` classification;
 - an installable QGIS dialog with rectangle drawing, planning, background
@@ -146,6 +150,8 @@ study_inputs/
   weather/
     weather_daily.csv
     weather_daily_points.gpkg
+  soil/
+    soil_profiles.gpkg
 ```
 
 The GeoPackage contains one `weather_daily_points` layer. Each row represents
@@ -161,9 +167,37 @@ converted to MJ/m²/day. E-OBS publishes only daily mean relative humidity, so
 using a constant actual-vapour-pressure approximation. The estimation is
 recorded in the manifest and task warnings.
 
-SoilGrids files are kept in their published integer units. Divide sand, silt,
-and clay by 10 for percent; divide `bdod` by 100 for kg/dm³ (equivalent in
-value to g/cm³). The plugin does not yet apply a pedotransfer function.
+SoilGrids raw files are kept in their published integer units. Unit conversion
+follows the [official SoilGrids layer definitions](https://docs.isric.org/globaldata/soilgrids/SoilGrids_faqs_01.html).
+Raw WCS GeoTIFFs that omit CRS metadata are assigned the native SoilGrids
+WGS84 Interrupted Goode Homolosine CRS (`ESRI:54052`) before being loaded.
+Normalization creates the `soil_profiles` polygon layer. A `profile_id` identifies each unique
+representative six-horizon soil class; disconnected polygons can share the same
+profile ID. The user selects the maximum number of output soil classes. Complete
+cell profiles are clustered jointly across every parameter and horizon using
+cell-count weighting. For distance calculation, one similarity unit is 5
+percentage points for each texture fraction, 10 percentage points for skeleton,
+0.5 percentage points for organic carbon, or 0.1 g/cm³ for bulk density. The
+stored class parameters are cell-weighted means. Each horizon
+block (`h1_` through `h6_`) records its top and bottom
+depth and contains:
+
+- `sand_pct`, `silt_pct`, and `clay_pct`, rescaled per horizon to total 100%;
+- `skel_pct`, the coarse-fragment volume percentage from `cfvo`;
+- `oc_pct`, the soil organic-carbon mass percentage from `soc`;
+- `bd_g_cm3`, bulk density in g/cm³ from `bdod`.
+
+Cells missing any input in any horizon are excluded initially. Every NoData
+cell in the acquired AOI raster is then filled from the nearest valid soil
+class, including corridors connected to the raster boundary, so the polygon
+layer covers the full AOI. PTF
+application is intentionally a later transformation: it can add hydraulic
+columns to this layer or create a separate IdrAgra-ready soil dataset before
+final export.
+
+When loaded by the plugin, `soil_profiles` is styled with stable categorical
+colors keyed by `profile_id`. The colors look shuffled but are deterministic,
+so a given profile ID keeps the same color when the layer is reloaded.
 
 ## Intended QGIS boundary
 

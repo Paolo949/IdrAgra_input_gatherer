@@ -12,10 +12,11 @@ from ..models import BoundingBox
 
 
 BASE_URL = "https://maps.isric.org/mapserv"
-PROPERTIES = ("sand", "silt", "clay", "bdod")
+PROPERTIES = ("sand", "silt", "clay", "cfvo", "soc", "bdod")
 DEPTHS = ("0-5cm", "5-15cm", "15-30cm", "30-60cm", "60-100cm", "100-200cm")
 WGS84_URI = "http://www.opengis.net/def/crs/EPSG/0/4326"
 SOILGRIDS_URI = "http://www.opengis.net/def/crs/EPSG/0/152160"
+SOILGRIDS_CRS = "ESRI:54052"
 
 
 @dataclass(frozen=True)
@@ -37,15 +38,12 @@ def plan_jobs(
     bbox: BoundingBox,
     *,
     properties: Iterable[str] = PROPERTIES,
-    depths: Iterable[str] = DEPTHS,
 ) -> list[SoilGridsJob]:
     jobs = []
     for property_name in properties:
         if property_name not in PROPERTIES:
             raise ValueError(f"unsupported SoilGrids property: {property_name}")
-        for depth in depths:
-            if depth not in DEPTHS:
-                raise ValueError(f"unsupported SoilGrids depth: {depth}")
+        for depth in DEPTHS:
             coverage_id = f"{property_name}_{depth}_mean"
             query = [
                 ("map", f"/map/{property_name}.map"),
@@ -68,7 +66,6 @@ def fetch(
     bbox: BoundingBox,
     *,
     properties: Iterable[str] = PROPERTIES,
-    depths: Iterable[str] = DEPTHS,
     is_cancelled: Callable[[], bool] | None = None,
     on_progress: Callable[[int, int, Path], None] | None = None,
     on_status: Callable[[str], None] | None = None,
@@ -77,7 +74,7 @@ def fetch(
     root_path = Path(root).resolve()
     output_dir = root_path / "raw" / "soil" / "soilgrids"
     output_dir.mkdir(parents=True, exist_ok=True)
-    jobs = plan_jobs(bbox, properties=properties, depths=depths)
+    jobs = plan_jobs(bbox, properties=properties)
     manifest = Manifest(root_path)
     outputs = []
 
@@ -105,6 +102,9 @@ def fetch(
                 if temporary.exists():
                     temporary.unlink()
 
+        if ensure_raster_crs(target) and on_status:
+            on_status(f"Assigned the SoilGrids {SOILGRIDS_CRS} CRS to {job.coverage_id}.")
+
         manifest.add_asset(
             target,
             category="soil",
@@ -118,3 +118,31 @@ def fetch(
         if on_progress:
             on_progress(index, len(jobs), target)
     return outputs
+
+
+def ensure_raster_crs(path: str | Path) -> bool:
+    """Embed the published SoilGrids CRS when a WCS TIFF omits it.
+
+    Returns ``True`` only when the file was changed. GDAL remains an optional
+    dependency for the acquisition core; the QGIS plugin always provides it.
+    """
+
+    try:
+        from osgeo import gdal, osr
+
+        gdal.UseExceptions()
+        osr.UseExceptions()
+        dataset = gdal.Open(str(path), gdal.GA_Update)
+        if dataset is None or dataset.RasterCount < 1:
+            return False
+        if (dataset.GetProjectionRef() or "").strip():
+            dataset = None
+            return False
+        spatial_reference = osr.SpatialReference()
+        spatial_reference.SetFromUserInput(SOILGRIDS_CRS)
+        dataset.SetProjection(spatial_reference.ExportToWkt())
+        dataset.FlushCache()
+        dataset = None
+        return True
+    except (ImportError, OSError, RuntimeError):
+        return False

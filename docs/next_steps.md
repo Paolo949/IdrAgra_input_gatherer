@@ -30,11 +30,18 @@ Each increment should stay usable without the later ones.
    - add a remote Copernicus DEM provider only if distribution terms and API
      stability justify the maintenance cost.
 
-5. **Soil and land use**
+5. **Soil and land use — SoilGrids normalization implemented**
    - local vector/raster staging and clipping first;
    - DUSAF/ERSAF provider experiments behind optional adapters;
    - CORINE and SoilGrids only as generic fallbacks;
-   - keep class mapping and pedotransfer as explicit editable steps.
+   - SoilGrids acquisition retains all six standard horizons and the texture,
+     coarse-fragment, organic-carbon, and bulk-density PTF inputs;
+   - SoilGrids normalization writes editable full-profile polygons in canonical
+     units, condenses similar profiles to a user-selected maximum class count,
+     fills all NoData gaps to cover the AOI, and does not apply a pedotransfer
+     function;
+   - next: make PTF application an explicit transformation from normalized soil
+     profiles to hydraulic or IdrAgra-ready columns.
 
 6. **v3 exporter**
    - pivot validated daily weather into seven IdrAgra files;

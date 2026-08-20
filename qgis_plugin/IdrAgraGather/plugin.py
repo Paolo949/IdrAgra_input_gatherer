@@ -10,6 +10,7 @@ from qgis.PyQt.QtWidgets import QAction, QMessageBox # pyright: ignore[reportAtt
 from qgis.core import (
     Qgis,
     QgsApplication,
+    QgsCategorizedSymbolRenderer,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsColorRampShader,
@@ -20,7 +21,9 @@ from qgis.core import (
     QgsProviderSublayerDetails,
     QgsRasterLayer,
     QgsRasterShader,
+    QgsRandomColorRamp,
     QgsSingleBandPseudoColorRenderer,
+    QgsSymbol,
     QgsTask,
     QgsVectorLayer,
 )
@@ -32,15 +35,14 @@ from .core.providers.corine import fetch as fetch_corine
 from .core.providers.era5_land import fetch, plan_jobs, write_plan
 from .core.providers.eobs import fetch as fetch_eobs
 from .core.providers.eobs import find_staged_files as find_staged_eobs_files
-from .core.providers.soilgrids import DEPTHS as SOIL_DEPTHS
-from .core.providers.soilgrids import PROPERTIES as SOIL_PROPERTIES
+from .core.providers.soilgrids import ensure_raster_crs as ensure_soilgrids_raster_crs
 from .core.providers.soilgrids import fetch as fetch_soilgrids
-from .core.providers.soilgrids import plan_jobs as plan_soilgrids_jobs
+from .core.soilgrids_normalize import find_staged_files as find_staged_soilgrids_files
+from .core.soilgrids_normalize import normalize_soilgrids_files
 from .core.staging import StagingArea
 from .dialog import (
     AcquisitionDialog,
     LANDUSE_SOURCE_CORINE,
-    SOIL_DEPTHS_TOPSOIL,
     SOIL_SOURCE_SOILGRIDS,
 )
 from .map_tool import RectangleMapTool
@@ -51,6 +53,7 @@ LAYER_GROUP = "IdrAgra gathered inputs"
 MESSAGE_LEVEL = getattr(Qgis, "MessageLevel", Qgis)
 MESSAGE_BUTTON = getattr(QMessageBox, "StandardButton", QMessageBox)
 NORMALIZED_WEATHER_NAME = "weather_daily_points.gpkg"
+NORMALIZED_SOIL_NAME = "soil_profiles.gpkg"
 
 
 class AcquisitionReporter(QObject):
@@ -191,9 +194,9 @@ def _run_acquisition(task, request):
     if task.isCanceled():
         return {"cancelled": True, "outputs": [str(path) for path in outputs]}
 
+    soil_outputs = []
     if request.get("soil_source") == SOIL_SOURCE_SOILGRIDS:
         report_status = request.get("status_callback")
-        depths = SOIL_DEPTHS[:3] if request.get("soil_depths") == SOIL_DEPTHS_TOPSOIL else SOIL_DEPTHS
 
         def soil_progress(done, total, _path):
             task.setProgress(max(task.progress(), 96 + 3 * done / total))
@@ -203,12 +206,44 @@ def _run_acquisition(task, request):
                 report_status("SoilGrids: " + message)
 
         soil_outputs = fetch_soilgrids(
-            request["output"], bbox, depths=depths,
+            request["output"], bbox,
             is_cancelled=task.isCanceled, on_progress=soil_progress,
             on_status=soil_status,
         )
         outputs.extend(soil_outputs)
-        load_paths.extend(soil_outputs)
+        if not request.get("normalize_soil"):
+            load_paths.extend(soil_outputs)
+
+    if task.isCanceled():
+        return {"cancelled": True, "outputs": [str(path) for path in outputs]}
+
+    if request.get("normalize_soil") and not task.isCanceled():
+        report_status = request.get("status_callback")
+        if not soil_outputs:
+            soil_outputs = list(find_staged_soilgrids_files(request["output"]))
+        task.setProgress(max(task.progress(), 96))
+
+        def soil_normalization_status(message):
+            if report_status is not None:
+                report_status("Normalize soil: " + message)
+
+        normalized_soil = normalize_soilgrids_files(
+            soil_outputs,
+            request["output"],
+            max_classes=request.get("soil_max_classes", 20),
+            on_status=soil_normalization_status,
+        )
+        outputs.append(normalized_soil.path)
+        load_paths.append(normalized_soil.path)
+        if report_status is not None:
+            report_status(
+                "Normalize soil: wrote "
+                f"{normalized_soil.polygon_count} polygon(s) for "
+                f"{normalized_soil.profile_count} class(es), condensed from "
+                f"{normalized_soil.exact_profile_count} exact profile(s); filled "
+                f"{normalized_soil.filled_nodata_cells} NoData cell(s) to cover the AOI."
+            )
+        task.setProgress(99)
 
     if request.get("landuse_source") == LANDUSE_SOURCE_CORINE:
         report_status = request.get("status_callback")
@@ -365,6 +400,28 @@ class IdrAgraGatherPlugin:
                     # replace the GeoPackage on Windows.
                     QCoreApplication.processEvents()
 
+        if request.get("normalize_soil"):
+            normalized_path = Path(request["output"]) / "soil" / NORMALIZED_SOIL_NAME
+            if normalized_path.exists():
+                answer = QMessageBox.question(
+                    self.iface.mainWindow(),
+                    "Replace normalized soil data?",
+                    "A normalized soil dataset already exists:\n\n"
+                    f"{normalized_path}\n\n"
+                    "Replace it with the result of this transformation?",
+                    MESSAGE_BUTTON.Yes | MESSAGE_BUTTON.No,
+                    MESSAGE_BUTTON.No,
+                )
+                if answer != MESSAGE_BUTTON.Yes:
+                    self.dialog.append_log("Transformation cancelled; existing normalized soil data kept.")
+                    return
+                removed = self._remove_project_layers_for_path(normalized_path)
+                if removed:
+                    self.dialog.append_log(
+                        f"Removed {removed} loaded normalized soil layer(s) before overwrite."
+                    )
+                    QCoreApplication.processEvents()
+
         QSettings().setValue("IdrAgraGather/output", request["output"])
         self.dialog.set_running(True)
         self.dialog.append_log(f"Task started: {action}.")
@@ -432,6 +489,9 @@ class IdrAgraGatherPlugin:
                 self._add_layer(layer, path)
                 return 1
         if path.suffix.lower() in {".tif", ".tiff", ".vrt", ".asc"}:
+            parts = {part.lower() for part in path.parts}
+            if {"raw", "soil", "soilgrids"}.issubset(parts):
+                ensure_soilgrids_raster_crs(path)
             layer = QgsRasterLayer(str(path), path.stem)
             if layer.isValid():
                 self._style_raster_layer(layer)
@@ -449,9 +509,28 @@ class IdrAgraGatherPlugin:
             layer = detail.toLayer(options)
             if layer is not None and layer.isValid():
                 layer.setName(f"{path.stem} — {detail.name()}")
+                self._style_normalized_soil_layer(layer, path)
                 self._add_layer(layer, path)
                 loaded += 1
         return loaded
+
+    @staticmethod
+    def _style_normalized_soil_layer(layer, path):
+        """Categorize normalized soil profiles using QGIS random colors."""
+        if Path(path).name.lower() != NORMALIZED_SOIL_NAME:
+            return
+        field_index = layer.fields().indexFromName("profile_id")
+        if field_index < 0:
+            return
+        values = sorted(layer.uniqueValues(field_index), key=lambda value: int(value))
+        symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+        if symbol is None:
+            return
+        categories = QgsCategorizedSymbolRenderer.createCategories(
+            values, symbol, QgsRandomColorRamp()
+        )
+        layer.setRenderer(QgsCategorizedSymbolRenderer("profile_id", categories))
+        layer.triggerRepaint()
 
     def _load_netcdf_sublayers(self, path):
         details = QgsProviderRegistry.instance().querySublayers(str(path))

@@ -3,7 +3,7 @@ from pathlib import Path
 from qgis.PyQt.QtCore import QDate, Qt, pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
 from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog,       # pyright: ignore[reportAttributeAccessIssue]
                                  QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,           # pyright: ignore[reportAttributeAccessIssue]
-                                 QPlainTextEdit, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)# pyright: ignore[reportAttributeAccessIssue]
+                                 QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)# pyright: ignore[reportAttributeAccessIssue]
 
 
 # PyQt6 scopes enums which PyQt5 also exposed directly on their classes.
@@ -17,9 +17,6 @@ WEATHER_SOURCE_LOCAL = "local"
 
 SOIL_SOURCE_SOILGRIDS = "soilgrids"
 SOIL_SOURCE_LOCAL = "local"
-
-SOIL_DEPTHS_ALL = "all"
-SOIL_DEPTHS_TOPSOIL = "topsoil"
 
 LANDUSE_SOURCE_CORINE = "corine"
 LANDUSE_SOURCE_LOCAL = "local"
@@ -204,21 +201,31 @@ class AcquisitionDialog(QDialog):
     def _build_soil_group(self):
         group = QGroupBox("Soil")
         layout = QGridLayout(group)
-        self.soil_status = QLabel("Raw: not found\nNormalized: not implemented")
+        self.soil_status = QLabel("Raw: not found\nNormalized: not found")
         self.soil_status.setStyleSheet("font-weight: bold;")
         self.soil_status.setWordWrap(True)
         self.soil_status.setTextInteractionFlags(TEXT_INTERACTION_FLAG.TextSelectableByMouse)
         self.soil_source_selector = QComboBox()
         self.soil_source_selector.addItem("ISRIC SoilGrids", SOIL_SOURCE_SOILGRIDS)
         self.soil_source_selector.addItem("Local file", SOIL_SOURCE_LOCAL)
-        self.soil_depths = QComboBox()
-        self.soil_depths.addItem("All six standard depths (0–200 cm)", SOIL_DEPTHS_ALL)
-        self.soil_depths.addItem("Topsoil only (0–30 cm)", SOIL_DEPTHS_TOPSOIL)
         self.soil_file = FilePicker("Soil data (*.gpkg *.shp *.tif *.tiff);;All files (*.*)")
         self.soil_options = QStackedWidget()
         soilgrids_page = QWidget()
         soilgrids_layout = QFormLayout(soilgrids_page)
-        soilgrids_layout.addRow("Depths", self.soil_depths)
+        soilgrids_note = QLabel(
+            "Downloads sand, silt, clay, coarse fragments, organic carbon, and "
+            "bulk density for all six SoilGrids horizons (0–200 cm)."
+        )
+        soilgrids_note.setWordWrap(True)
+        soilgrids_layout.addRow(soilgrids_note)
+        self.soil_max_classes = QSpinBox()
+        self.soil_max_classes.setRange(1, 999)
+        self.soil_max_classes.setValue(20)
+        self.soil_max_classes.setToolTip(
+            "Similar complete soil profiles are clustered jointly across all six "
+            "horizons until no more than this number of classes remains."
+        )
+        soilgrids_layout.addRow("Maximum soil classes", self.soil_max_classes)
         local_soil_page = QWidget()
         local_soil_layout = QFormLayout(local_soil_page)
         local_soil_layout.addRow("Input file", self.soil_file)
@@ -228,9 +235,8 @@ class AcquisitionDialog(QDialog):
         self.soil_transform_button = QPushButton("Transform existing")
         self.soil_both_button = QPushButton("Acquire + transform")
         self.soil_acquire_button.clicked.connect(lambda: self.runRequested.emit("soil-acquire"))
-        for button in (self.soil_transform_button, self.soil_both_button):
-            button.setEnabled(False)
-            button.setToolTip("Soil unit conversion and PTF transformation are the next milestone.")
+        self.soil_transform_button.clicked.connect(lambda: self.runRequested.emit("soil-transform"))
+        self.soil_both_button.clicked.connect(lambda: self.runRequested.emit("soil-both"))
         layout.addWidget(QLabel("Status"), 0, 0)
         layout.addWidget(self.soil_status, 0, 1, 1, 3)
         layout.addWidget(QLabel("Source"), 1, 0)
@@ -239,7 +245,10 @@ class AcquisitionDialog(QDialog):
         layout.addWidget(self.soil_acquire_button, 3, 1)
         layout.addWidget(self.soil_transform_button, 3, 2)
         layout.addWidget(self.soil_both_button, 3, 3)
-        note = QLabel("Transform will later apply unit conversion and a selected PTF.")
+        note = QLabel(
+            "Transform creates editable normalized soil profiles. PTF application and "
+            "IdrAgra-ready hydraulic columns remain separate later steps."
+        )
         note.setWordWrap(True)
         layout.addWidget(note, 4, 1, 1, 3)
         return group
@@ -369,7 +378,11 @@ class AcquisitionDialog(QDialog):
             )
         if weather_source == WEATHER_SOURCE_LOCAL and not self.weather_file.path():
             raise ValueError("Choose a local weather file or another weather source.")
-        soil_source = self.soil_source_selector.currentData() if action == "soil-acquire" else None
+        selected_soil = self.soil_source_selector.currentData()
+        soil_source = selected_soil if action in {"soil-acquire", "soil-both"} else None
+        normalize_soil = action in {"soil-transform", "soil-both"}
+        if normalize_soil and selected_soil != SOIL_SOURCE_SOILGRIDS:
+            raise ValueError("Automatic soil normalization currently supports ISRIC SoilGrids only.")
         if soil_source == SOIL_SOURCE_LOCAL and not self.soil_file.path():
             raise ValueError("Choose a local soil file or another soil source.")
         landuse_source = (
@@ -406,7 +419,8 @@ class AcquisitionDialog(QDialog):
             "normalize_weather": normalize_weather,
             "timezone": self.timezone_combo.currentData(),
             "soil_source": soil_source,
-            "soil_depths": self.soil_depths.currentData(),
+            "normalize_soil": normalize_soil,
+            "soil_max_classes": int(self.soil_max_classes.value()),
             "landuse_source": landuse_source,
             "local_files": local_files,
             "output": output,
@@ -421,17 +435,21 @@ class AcquisitionDialog(QDialog):
         self.weather_source_selector.setEnabled(not running)
         self.soil_source_selector.setEnabled(not running)
         self.landuse_source_selector.setEnabled(not running)
+        self.soil_max_classes.setEnabled(not running)
         for button in (
             self.weather_acquire_button,
             self.weather_transform_button,
             self.weather_both_button,
             self.soil_acquire_button,
+            self.soil_transform_button,
+            self.soil_both_button,
             self.landuse_acquire_button,
             self.topography_stage_button,
         ):
             button.setEnabled(not running)
         if not running:
             self._update_weather_file_state()
+            self._update_soil_file_state()
             self._update_landuse_file_state()
 
     def _browse_output(self):
@@ -458,6 +476,10 @@ class AcquisitionDialog(QDialog):
         source = self.soil_source_selector.currentData()
         self.soil_options.setCurrentIndex(self.soil_source_selector.currentIndex())
         self.soil_acquire_button.setEnabled(source in {SOIL_SOURCE_SOILGRIDS, SOIL_SOURCE_LOCAL})
+        can_normalize = source == SOIL_SOURCE_SOILGRIDS
+        self.soil_max_classes.setEnabled(can_normalize)
+        self.soil_transform_button.setEnabled(can_normalize)
+        self.soil_both_button.setEnabled(can_normalize)
         self.refresh_status()
 
     def _update_landuse_file_state(self):
@@ -503,7 +525,13 @@ class AcquisitionDialog(QDialog):
             raw_soil_text = f"Raw: {soil_count} files in {soil_raw}"
         else:
             raw_soil_text = f"Raw: not found in {soil_raw}"
-        self.soil_status.setText(raw_soil_text + "\nNormalized: not implemented")
+        normalized_soil = root / "soil" / "soil_profiles.gpkg"
+        normalized_soil_text = (
+            f"Normalized: {normalized_soil}"
+            if normalized_soil.is_file()
+            else f"Normalized: not found at {normalized_soil}"
+        )
+        self.soil_status.setText(raw_soil_text + "\n" + normalized_soil_text)
 
         landuse_provider = {
             LANDUSE_SOURCE_CORINE: "corine",
