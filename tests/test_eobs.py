@@ -3,9 +3,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from idragather.models import BoundingBox, DateWindow
-from idragather.providers.eobs import VARIABLES, fetch, plan_jobs
-from idragather.staging import find_staged_files
+from IdrAgraGather.core.models import BoundingBox, DateWindow
+from IdrAgraGather.core.providers.eobs import VARIABLES, fetch, plan_jobs
+from IdrAgraGather.core.staging import find_staged_files
 
 
 class EobsProviderTests(unittest.TestCase):

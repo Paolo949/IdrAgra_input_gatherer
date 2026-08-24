@@ -5,9 +5,9 @@ from pathlib import Path
 
 import numpy as np
 
-from idragather.models import BoundingBox
-from idragather.providers.soilgrids import DEPTHS, PROPERTIES
-from idragather.soilgrids_normalize import (
+from IdrAgraGather.core.models import BoundingBox
+from IdrAgraGather.core.providers.soilgrids import DEPTHS, PROPERTIES
+from IdrAgraGather.core.soilgrids_normalize import (
     normalize_soilgrids_arrays,
     normalize_soilgrids_files,
 )

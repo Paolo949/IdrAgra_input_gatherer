@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from idragather.era5_normalize import (
+from IdrAgraGather.core.era5_normalize import (
     Era5Cube,
     OUTPUT_LAYER,
     WIND_10M_TO_2M,
@@ -11,7 +11,7 @@ from idragather.era5_normalize import (
     _daily_utc_hours,
     aggregate_daily,
 )
-from idragather.models import DateWindow
+from IdrAgraGather.core.models import DateWindow
 from zoneinfo import ZoneInfo
 
 

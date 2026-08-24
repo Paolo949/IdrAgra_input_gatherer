@@ -1,6 +1,7 @@
 {
   "python.defaultInterpreterPath": "C:\\Program Files\\QGIS 4.2.1\\bin\\python3.exe", // Python interpreter used by QGIS so that qgis related imports are recognized
   "python.analysis.extraPaths": [
+    "${workspaceFolder}/src",
     "C:\\Program Files\\QGIS 4.2.1\\apps\\qgis\\python",
     "C:\\Program Files\\QGIS 4.2.1\\apps\\Python312\\Lib\\site-packages",
     "C:\\Users\\Soffi\\AppData\\Roaming\\QGIS\\QGIS4\\profiles\\default\\python"

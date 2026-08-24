@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from idragather.models import BoundingBox
-from idragather.providers.soilgrids import (
+from IdrAgraGather.core.models import BoundingBox
+from IdrAgraGather.core.providers.soilgrids import (
     DEPTHS,
     PROPERTIES,
     SOILGRIDS_CRS,

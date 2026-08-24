@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from idragather.eobs_normalize import (
+from IdrAgraGather.core.eobs_normalize import (
     RADIATION_W_M2_TO_MJ_M2_DAY,
     _common_date_window,
     _complete_location_mask,
@@ -11,9 +11,9 @@ from idragather.eobs_normalize import (
     _to_canonical_daily,
     _read_subset,
 )
-from idragather.era5_normalize import DAILY_FIELDS, WIND_10M_TO_2M
-from idragather.models import BoundingBox, DateWindow
-from idragather.providers.eobs import VARIABLES
+from IdrAgraGather.core.era5_normalize import DAILY_FIELDS, WIND_10M_TO_2M
+from IdrAgraGather.core.models import BoundingBox, DateWindow
+from IdrAgraGather.core.providers.eobs import VARIABLES
 
 
 class EobsNormalizeTests(unittest.TestCase):

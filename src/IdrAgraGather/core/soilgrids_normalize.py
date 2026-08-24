@@ -16,7 +16,8 @@ DEPTH_BOUNDS = ((0, 5), (5, 15), (15, 30), (30, 60), (60, 100), (100, 200))
 VALUE_NAMES = ("sand_pct", "silt_pct", "clay_pct", "skel_pct", "oc_pct", "bd_g_cm3")
 ROUND_DECIMALS = 4
 DEFAULT_MAX_CLASSES = 20
-SIMILARITY_SCALES = { # in defining soil classes (individual IDs), a change in sand content of "sand_pct"% holds the same weight as a change in organic carbon of "oc_pct"%
+# These scales give comparable weight to changes in each soil property.
+SIMILARITY_SCALES = {
     "sand_pct": 5.0,
     "silt_pct": 5.0,
     "clay_pct": 5.0,

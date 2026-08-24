@@ -6,8 +6,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_SOURCE = ROOT / "qgis_plugin" / "IdrAgraGather"
-CORE_SOURCE = ROOT / "src" / "idragather"
+PLUGIN_SOURCE = ROOT / "src" / "IdrAgraGather"
 REQUIRED = ("__init__.py", "metadata.txt", "plugin.py", "dialog.py", "map_tool.py")
 PACKAGE_NAME = "IdrAgraGather"
 
@@ -24,11 +23,6 @@ def build(output: Path) -> Path:
         shutil.copytree(
             PLUGIN_SOURCE,
             package,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-        )
-        shutil.copytree(
-            CORE_SOURCE,
-            package / "core",
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
         with ZipFile(output, "w", ZIP_DEFLATED) as archive:

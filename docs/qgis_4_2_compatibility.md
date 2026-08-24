@@ -10,5 +10,5 @@ The installable package targets QGIS 4.2 while retaining QGIS 3.28 support.
   the worker function.
 
 The automated packaging test rejects nested roots such as
-`qgis_plugin/IdrAgraGather`, because QGIS would turn that path into an invalid
-Python package name.
+`src/IdrAgraGather`, because QGIS would turn that path into an invalid Python
+package name.

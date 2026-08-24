@@ -27,18 +27,17 @@ from qgis.core import (
     QgsTask,
     QgsVectorLayer,
 )
-                                                                                        # Imports raise pylance warnings because core doesn't exist yet, we ignore them because the install zip will have it
-from .core.corine_normalize import normalize_corine_file                                # pyright: ignore[reportMissingImports]
-from .core.era5_normalize import normalize_era5_files                                   # pyright: ignore[reportMissingImports]
-from .core.eobs_normalize import common_date_coverage, normalize_eobs_files             # pyright: ignore[reportMissingImports]
-from .core.models import BoundingBox, DateWindow                                        # pyright: ignore[reportMissingImports]
-from .core.providers.corine import fetch as fetch_corine                                # pyright: ignore[reportMissingImports]
-from .core.providers.era5_land import fetch, plan_jobs, write_plan                      # pyright: ignore[reportMissingImports]
-from .core.providers.eobs import fetch as fetch_eobs                                    # pyright: ignore[reportMissingImports]
-from .core.providers.soilgrids import ensure_raster_crs as ensure_soilgrids_raster_crs  # pyright: ignore[reportMissingImports]
-from .core.providers.soilgrids import fetch as fetch_soilgrids                          # pyright: ignore[reportMissingImports]
-from .core.soilgrids_normalize import normalize_soilgrids_files                         # pyright: ignore[reportMissingImports]
-from .core.staging import StagingArea, find_staged_files                                # pyright: ignore[reportMissingImports]
+from .core.corine_normalize import normalize_corine_file
+from .core.era5_normalize import normalize_era5_files
+from .core.eobs_normalize import common_date_coverage, normalize_eobs_files
+from .core.models import BoundingBox, DateWindow
+from .core.providers.corine import fetch as fetch_corine
+from .core.providers.era5_land import fetch, plan_jobs, write_plan
+from .core.providers.eobs import fetch as fetch_eobs
+from .core.providers.soilgrids import ensure_raster_crs as ensure_soilgrids_raster_crs
+from .core.providers.soilgrids import fetch as fetch_soilgrids
+from .core.soilgrids_normalize import normalize_soilgrids_files
+from .core.staging import StagingArea, find_staged_files
 from .dialog import (
     AcquisitionDialog,
     LANDUSE_SOURCE_CORINE,

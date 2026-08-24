@@ -14,7 +14,11 @@ dependencies = []
 era5 = ["cdsapi>=0.7"]
 
 [project.scripts]
-idragather = "idragather.cli:main"
+idragather = "IdrAgraGather.core.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["IdrAgraGather", "IdrAgraGather.core*"]
+
+[tool.setuptools.package-data]
+IdrAgraGather = ["metadata.txt"]

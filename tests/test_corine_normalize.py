@@ -3,12 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from idragather.corine_normalize import (
+from IdrAgraGather.core.corine_normalize import (
     CORINE_CATEGORIES,
     corine_category,
     normalize_corine_file,
 )
-from idragather.models import BoundingBox
+from IdrAgraGather.core.models import BoundingBox
 
 
 class CorineNormalizeTests(unittest.TestCase):

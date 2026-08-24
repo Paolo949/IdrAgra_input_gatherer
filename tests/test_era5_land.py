@@ -6,8 +6,8 @@ from pathlib import Path
 import sys
 import types
 
-from idragather.models import BoundingBox, DateWindow
-from idragather.providers.era5_land import DATASET, fetch, plan_jobs, write_plan
+from IdrAgraGather.core.models import BoundingBox, DateWindow
+from IdrAgraGather.core.providers.era5_land import DATASET, fetch, plan_jobs, write_plan
 
 
 class FakeClient:

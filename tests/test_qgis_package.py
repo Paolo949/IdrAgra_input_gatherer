@@ -32,7 +32,7 @@ class QgisPackageTests(unittest.TestCase):
             self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))
 
     def test_qgis4_removed_enum_aliases_are_not_used(self):
-        plugin_root = Path(__file__).resolve().parents[1] / "qgis_plugin" / "IdrAgraGather"
+        plugin_root = Path(__file__).resolve().parents[1] / "src" / "IdrAgraGather"
         source = "\n".join(
             path.read_text(encoding="utf-8") for path in plugin_root.glob("*.py")
         )
@@ -51,7 +51,7 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("QKeyEvent", source)
 
     def test_workspace_has_scoped_actions_and_collapsed_raw_groups(self):
-        plugin_root = Path(__file__).resolve().parents[1] / "qgis_plugin" / "IdrAgraGather"
+        plugin_root = Path(__file__).resolve().parents[1] / "src" / "IdrAgraGather"
         dialog = (plugin_root / "dialog.py").read_text(encoding="utf-8")
         plugin = (plugin_root / "plugin.py").read_text(encoding="utf-8")
         for action in (

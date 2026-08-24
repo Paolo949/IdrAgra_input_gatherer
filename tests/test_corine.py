@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from idragather.models import BoundingBox
-from idragather.providers.corine import build_query_url, fetch
+from IdrAgraGather.core.models import BoundingBox
+from IdrAgraGather.core.providers.corine import build_query_url, fetch
 
 
 class FakeResponse(io.BytesIO):

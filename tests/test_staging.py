@@ -3,9 +3,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from idragather.manifest import Manifest
-from idragather.models import BoundingBox
-from idragather.staging import StagingArea, find_staged_files
+from IdrAgraGather.core.manifest import Manifest
+from IdrAgraGather.core.models import BoundingBox
+from IdrAgraGather.core.staging import StagingArea, find_staged_files
 
 
 class StagingTests(unittest.TestCase):

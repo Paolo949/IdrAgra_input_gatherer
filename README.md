@@ -9,6 +9,11 @@ The core has no QGIS dependency. The included QGIS prototype calls those same
 functions from a background `QgsTask`, while the command line remains useful
 for tests and batch work.
 
+The authoritative source tree mirrors the installed plugin: reusable modules
+live under `src/IdrAgraGather/core`, beside the QGIS adapter. Tests and
+the plugin therefore import the same modules, and the build does not copy or
+rename Python packages.
+
 ## Try the QGIS interface
 
 Install the archive whose name begins with `INSTALL_THIS_` using **Plugins → Manage and Install
@@ -49,8 +54,8 @@ confirmation first and releases any loaded QGIS layer before replacing the file.
 For running-year E-OBS data, acquisition reports the date interval actually
 available across all six variables. Normalization uses that common interval and
 records a warning when the provisional files end before the requested date.
-Changing the dialog end date does not lose the staged acquisition: compatible
-files are resolved from manifest provenance instead of an exact filename hash.
+Staged files are resolved from their provider records in the manifest rather
+than by reconstructing storage paths in the plugin.
 
 Source-specific controls use stacked pages: choosing ERA5-Land shows its period
 and timezone, while choosing a local source shows only its file picker. Status

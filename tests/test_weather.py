@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from idragather.weather import FIELDS, validate_weather_csv, write_weather_template
+from IdrAgraGather.core.weather import FIELDS, validate_weather_csv, write_weather_template
 
 
 class WeatherTests(unittest.TestCase):
