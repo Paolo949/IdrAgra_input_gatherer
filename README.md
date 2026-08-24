@@ -229,7 +229,7 @@ provider clients and data contracts stay in the independent core.
 To rebuild the installable plugin archive:
 
 ```bash
-python tools/build_qgis_plugin.py dist/IdrAgraGather_qgis.zip
+python tools/build_qgis_plugin.py IdrAgraGather_QGIS_installer.zip
 ```
 
 ## Important ERA5-Land details for the next step

@@ -3,9 +3,9 @@ from pathlib import Path
 from qgis.PyQt.QtCore import QDate, Qt, pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
 from qgis.PyQt.QtWidgets import (  # pyright: ignore[reportAttributeAccessIssue]
     QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog,
-    QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget,
-    QVBoxLayout, QWidget,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 
@@ -13,6 +13,7 @@ from qgis.PyQt.QtWidgets import (  # pyright: ignore[reportAttributeAccessIssue]
 WINDOW_TYPE = getattr(Qt, "WindowType", Qt)
 STANDARD_BUTTON = getattr(QDialogButtonBox, "StandardButton", QDialogButtonBox)
 TEXT_INTERACTION_FLAG = getattr(Qt, "TextInteractionFlag", Qt)
+FRAME_SHAPE = getattr(QFrame, "Shape", QFrame)
 
 WEATHER_SOURCE_ERA5 = "era5"
 WEATHER_SOURCE_EOBS = "eobs"
@@ -69,10 +70,6 @@ class AcquisitionDialog(QDialog):
         self.setWindowFlags(self.windowFlags() | WINDOW_TYPE.WindowMinMaxButtonsHint)
 
         layout = QVBoxLayout(self)
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        form = QWidget()
-        form_layout = QVBoxLayout(form)
 
         # Introductory text at the top of the dialog
         intro = QLabel(
@@ -80,18 +77,28 @@ class AcquisitionDialog(QDialog):
             "Supports both local files and online sources accessible through web APIs."
         )
         intro.setWordWrap(True) # allows the intro text to wrap over multiple lines
-        form_layout.addWidget(intro)
+        layout.addWidget(intro)
 
-        # Creates each group of widgets
-        form_layout.addWidget(self._build_aoi_group())
-        form_layout.addWidget(self._build_output_group())
-        form_layout.addWidget(self._build_weather_group())
-        form_layout.addWidget(self._build_soil_group())
-        form_layout.addWidget(self._build_landuse_group())
-        form_layout.addWidget(self._build_topography_group())
-        form_layout.addStretch()
-        scroll_area.setWidget(form)
-        layout.addWidget(scroll_area, 1)
+        # The workspace and AOI apply to every data category, so they remain
+        # visible while the user moves between the category-specific pages.
+        layout.addWidget(self._build_output_group())
+        layout.addWidget(self._build_aoi_group())
+
+        self.category_tabs = QTabWidget()
+        self.category_tabs.setDocumentMode(True)
+        self.category_tabs.addTab(
+            self._scrollable_page(self._build_weather_group()), "Weather"
+        )
+        self.category_tabs.addTab(
+            self._scrollable_page(self._build_soil_group()), "Soil"
+        )
+        self.category_tabs.addTab(
+            self._scrollable_page(self._build_landuse_group()), "Land use"
+        )
+        self.category_tabs.addTab(
+            self._scrollable_page(self._build_topography_group()), "Topography"
+        )
+        layout.addWidget(self.category_tabs, 1)
 
         # Creates the log area at the bottom of the dialog
         self.log = QPlainTextEdit()
@@ -115,8 +122,22 @@ class AcquisitionDialog(QDialog):
         self._update_soil_file_state()
         self._update_landuse_file_state()
 
+    @staticmethod
+    def _scrollable_page(content):
+        """Wrap one category in a page that can grow independently."""
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(FRAME_SHAPE.NoFrame)
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(content)
+        page_layout.addStretch()
+        scroll_area.setWidget(page)
+        return scroll_area
+
     def _build_aoi_group(self):
-        group = QGroupBox("1. Study area")
+        group = QGroupBox("Study area")
         layout = QGridLayout(group)
         self.aoi_text = QLineEdit()
         self.aoi_text.setReadOnly(True)

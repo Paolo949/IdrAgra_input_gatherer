@@ -21,7 +21,7 @@ from qgis.core import (
     QgsProviderSublayerDetails,
     QgsRasterLayer,
     QgsRasterShader,
-    QgsRandomColorRamp,
+    QgsRendererCategory,
     QgsSingleBandPseudoColorRenderer,
     QgsSymbol,
     QgsTask,
@@ -625,19 +625,16 @@ class IdrAgraGatherPlugin:
 
     @staticmethod
     def _style_normalized_soil_layer(layer, path):
-        """Categorize normalized soil profiles using QGIS random colors."""
+        """Categorize normalized soil profiles using stable colors."""
         if Path(path).name.lower() != NORMALIZED_SOIL_NAME:
             return
         field_index = layer.fields().indexFromName("profile_id")
         if field_index < 0:
             return
         values = sorted(layer.uniqueValues(field_index), key=lambda value: int(value))
-        symbol = QgsSymbol.defaultSymbol(layer.geometryType())
-        if symbol is None:
+        categories = IdrAgraGatherPlugin._categories_for_values(layer, values)
+        if not categories:
             return
-        categories = QgsCategorizedSymbolRenderer.createCategories(
-            values, symbol, QgsRandomColorRamp()
-        )
         layer.setRenderer(QgsCategorizedSymbolRenderer("profile_id", categories))
         layer.triggerRepaint()
 
@@ -650,14 +647,28 @@ class IdrAgraGatherPlugin:
         if field_index < 0:
             return
         values = sorted(layer.uniqueValues(field_index), key=str)
-        symbol = QgsSymbol.defaultSymbol(layer.geometryType())
-        if symbol is None:
+        categories = IdrAgraGatherPlugin._categories_for_values(layer, values)
+        if not categories:
             return
-        categories = QgsCategorizedSymbolRenderer.createCategories(
-            values, symbol, QgsRandomColorRamp()
-        )
         layer.setRenderer(QgsCategorizedSymbolRenderer("landuse", categories))
         layer.triggerRepaint()
+
+    @staticmethod
+    def _categories_for_values(layer, values):
+        """Build QGIS 3/4-compatible categories with deterministic colors."""
+        base_symbol = QgsSymbol.defaultSymbol(layer.geometryType())
+        if base_symbol is None:
+            return []
+        categories = []
+        for value in values:
+            digest = hashlib.sha256(str(value).encode("utf-8")).digest()
+            hue = int.from_bytes(digest[:2], "big") % 360
+            saturation = 150 + digest[2] % 71
+            brightness = 185 + digest[3] % 51
+            symbol = base_symbol.clone()
+            symbol.setColor(QColor.fromHsv(hue, saturation, brightness))
+            categories.append(QgsRendererCategory(value, symbol, str(value)))
+        return categories
 
     def _load_netcdf_sublayers(self, path):
         details = _qgis_provider_registry().querySublayers(str(path))
