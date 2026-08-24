@@ -150,7 +150,7 @@ def read_eobs_daily(
         row_indices, column_indices = _spatial_indices(latitudes, longitudes, bbox)
         selected_latitudes = latitudes[row_indices]
         selected_longitudes = longitudes[column_indices]
-        if output_latitudes is None:
+        if output_latitudes is None or output_longitudes is None:
             output_latitudes = selected_latitudes
             output_longitudes = selected_longitudes
         # Published variables differ by up to about 0.00014 degrees in their
@@ -234,7 +234,8 @@ def _to_canonical_daily(
     for day in _days(window):
 
         # Reconstructs daily minimum and maximum humidity using FAO-56's approach (equation 19)
-        # Todo: note that this reconstruction would be much more accurate if hourly temperature was avaialable; integrating E-OBS with ERA5's hourly temperature could be a future improvement.
+        # Hourly temperatures would improve this reconstruction; a future version
+        # could supplement E-OBS with ERA5 hourly temperatures.
         tmin = raw["tn"][day]
         tmax = raw["tx"][day]
         rhmean = raw["hu"][day]

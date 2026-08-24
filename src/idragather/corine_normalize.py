@@ -77,13 +77,6 @@ class CorineNormalizationResult:
     category_count: int
 
 
-def find_staged_file(root: str | Path) -> Path:
-    path = Path(root).resolve() / "raw" / "landuse" / "corine" / "clc2018.geojson"
-    if not path.is_file():
-        raise ValueError(f"No staged CORINE GeoJSON found at {path}")
-    return path
-
-
 def corine_category(code: object) -> str:
     """Return the official level-three category for a CORINE class code."""
 

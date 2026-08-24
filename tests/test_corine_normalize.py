@@ -6,7 +6,6 @@ from pathlib import Path
 from idragather.corine_normalize import (
     CORINE_CATEGORIES,
     corine_category,
-    find_staged_file,
     normalize_corine_file,
 )
 from idragather.models import BoundingBox
@@ -26,22 +25,6 @@ class CorineNormalizeTests(unittest.TestCase):
                 ValueError, "CORINE class code"
             ):
                 corine_category(code)
-
-    def test_find_staged_file_uses_the_raw_corine_location(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            expected = (
-                Path(temporary)
-                / "raw"
-                / "landuse"
-                / "corine"
-                / "clc2018.geojson"
-            )
-            expected.parent.mkdir(parents=True)
-            expected.write_text("{}", encoding="utf-8")
-            self.assertEqual(find_staged_file(temporary), expected)
-            expected.unlink()
-            with self.assertRaisesRegex(ValueError, "No staged CORINE GeoJSON"):
-                find_staged_file(temporary)
 
     def test_gdal_pipeline_writes_only_landuse_attributes(self):
         try:

@@ -27,21 +27,18 @@ from qgis.core import (
     QgsTask,
     QgsVectorLayer,
 )
-
-from .core.corine_normalize import find_staged_file as find_staged_corine_file
-from .core.corine_normalize import normalize_corine_file
-from .core.era5_normalize import normalize_era5_files
-from .core.eobs_normalize import common_date_coverage, normalize_eobs_files
-from .core.models import BoundingBox, DateWindow
-from .core.providers.corine import fetch as fetch_corine
-from .core.providers.era5_land import fetch, plan_jobs, write_plan
-from .core.providers.eobs import fetch as fetch_eobs
-from .core.providers.eobs import find_staged_files as find_staged_eobs_files
-from .core.providers.soilgrids import ensure_raster_crs as ensure_soilgrids_raster_crs
-from .core.providers.soilgrids import fetch as fetch_soilgrids
-from .core.soilgrids_normalize import find_staged_files as find_staged_soilgrids_files
-from .core.soilgrids_normalize import normalize_soilgrids_files
-from .core.staging import StagingArea
+                                                                                        # Imports raise pylance warnings because core doesn't exist yet, we ignore them because the install zip will have it
+from .core.corine_normalize import normalize_corine_file                                # pyright: ignore[reportMissingImports]
+from .core.era5_normalize import normalize_era5_files                                   # pyright: ignore[reportMissingImports]
+from .core.eobs_normalize import common_date_coverage, normalize_eobs_files             # pyright: ignore[reportMissingImports]
+from .core.models import BoundingBox, DateWindow                                        # pyright: ignore[reportMissingImports]
+from .core.providers.corine import fetch as fetch_corine                                # pyright: ignore[reportMissingImports]
+from .core.providers.era5_land import fetch, plan_jobs, write_plan                      # pyright: ignore[reportMissingImports]
+from .core.providers.eobs import fetch as fetch_eobs                                    # pyright: ignore[reportMissingImports]
+from .core.providers.soilgrids import ensure_raster_crs as ensure_soilgrids_raster_crs  # pyright: ignore[reportMissingImports]
+from .core.providers.soilgrids import fetch as fetch_soilgrids                          # pyright: ignore[reportMissingImports]
+from .core.soilgrids_normalize import normalize_soilgrids_files                         # pyright: ignore[reportMissingImports]
+from .core.staging import StagingArea, find_staged_files                                # pyright: ignore[reportMissingImports]
 from .dialog import (
     AcquisitionDialog,
     LANDUSE_SOURCE_CORINE,
@@ -105,10 +102,11 @@ def _run_acquisition(task, request):
                     on_status=update_status,
             )
         else:
-            weather_dir = Path(request["output"]) / "raw" / "weather" / "era5_land"
-            weather_outputs = sorted(weather_dir.glob("*.nc"))
-            if not weather_outputs:
-                raise ValueError(f"No staged ERA5-Land NetCDF files found in {weather_dir}")
+            weather_outputs = find_staged_files(
+                request["output"],
+                provider="copernicus-cds",
+                suffix=".nc",
+            )
             if report_status is not None:
                 report_status(
                     f"Normalize: found {len(weather_outputs)} staged NetCDF file(s)."
@@ -156,7 +154,11 @@ def _run_acquisition(task, request):
                 on_status=eobs_status,
             )
         else:
-            weather_outputs = find_staged_eobs_files(request["output"], bbox, window)
+            weather_outputs = find_staged_files(
+                request["output"],
+                provider="eobs-knmi",
+                suffix=".nc",
+            )
             eobs_status(f"Found {len(weather_outputs)} staged NetCDF file(s).")
 
         # Raw-only acquisition has no normalization result in which to report
@@ -223,7 +225,13 @@ def _run_acquisition(task, request):
     if request.get("normalize_soil") and not task.isCanceled():
         report_status = request.get("status_callback")
         if not soil_outputs:
-            soil_outputs = list(find_staged_soilgrids_files(request["output"]))
+            soil_outputs = list(
+                find_staged_files(
+                    request["output"],
+                    provider="isric-soilgrids-wcs",
+                    suffix=".tif",
+                )
+            )
         task.setProgress(max(task.progress(), 96))
 
         def soil_normalization_status(message):
@@ -277,7 +285,13 @@ def _run_acquisition(task, request):
     if request.get("normalize_landuse"):
         report_status = request.get("status_callback")
         if not landuse_outputs:
-            landuse_outputs = [find_staged_corine_file(request["output"])]
+            landuse_outputs = list(
+                find_staged_files(
+                    request["output"],
+                    provider="eea-corine-arcgis-rest",
+                    suffix=".geojson",
+                )
+            )
 
         def landuse_normalization_status(message):
             if report_status is not None:

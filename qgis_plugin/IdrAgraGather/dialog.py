@@ -1,9 +1,12 @@
 from pathlib import Path
 
 from qgis.PyQt.QtCore import QDate, Qt, pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
-from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog,       # pyright: ignore[reportAttributeAccessIssue]
-                                 QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,           # pyright: ignore[reportAttributeAccessIssue]
-                                 QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget, QVBoxLayout, QWidget)# pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtWidgets import (  # pyright: ignore[reportAttributeAccessIssue]
+    QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog,
+    QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget,
+    QVBoxLayout, QWidget,
+)
 
 
 # PyQt6 scopes enums which PyQt5 also exposed directly on their classes.

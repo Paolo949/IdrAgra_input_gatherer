@@ -21,6 +21,7 @@ VARIABLES = (
 )
 TIMES = tuple(f"{hour:02d}:00" for hour in range(24))
 GRID_DEGREES = 0.1
+STAGED_RELATIVE_DIRECTORY = Path("raw/weather/era5_land")
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ def fetch(
         )
 
     root = Path(output_root).resolve()
-    destination_dir = root / "raw" / "weather" / "era5_land"
+    destination_dir = root / STAGED_RELATIVE_DIRECTORY
     destination_dir.mkdir(parents=True, exist_ok=True)
     manifest = Manifest(root)
     manifest.configure(aoi=bbox.as_dict(), date_window=window.as_dict())
@@ -187,7 +188,7 @@ def write_plan(
     """Write the exact CDS jobs so the QGIS prototype can run without credentials."""
 
     root = Path(output_root).resolve()
-    output = root / "raw" / "weather" / "era5_land" / "era5_plan.json"
+    output = root / STAGED_RELATIVE_DIRECTORY / "era5_plan.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     jobs = plan_jobs(bbox, window)
     payload = {

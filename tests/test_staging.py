@@ -3,11 +3,53 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from idragather.staging import StagingArea
+from idragather.manifest import Manifest
 from idragather.models import BoundingBox
+from idragather.staging import StagingArea, find_staged_files
 
 
 class StagingTests(unittest.TestCase):
+    def test_find_staged_files_filters_manifest_assets_and_checks_their_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            january = root / "raw" / "weather" / "era5_land" / "2024-01.nc"
+            february = root / "raw" / "weather" / "era5_land" / "2024-02.nc"
+            plan = january.parent / "era5_plan.json"
+            eobs = root / "raw" / "weather" / "eobs" / "temperature.nc"
+            january.parent.mkdir(parents=True)
+            eobs.parent.mkdir(parents=True)
+            for path in (february, january, plan):
+                path.touch()
+            eobs.touch()
+
+            manifest = Manifest(root)
+            for path in (february, january, plan):
+                manifest.add_asset(
+                    path,
+                    category="weather",
+                    provider="copernicus-cds",
+                )
+            manifest.add_asset(
+                eobs,
+                category="weather",
+                provider="eobs-knmi",
+            )
+
+            paths = find_staged_files(
+                root,
+                provider="copernicus-cds",
+                suffix=".nc",
+            )
+            self.assertEqual(paths, (january, february))
+
+            january.unlink()
+            with self.assertRaisesRegex(ValueError, "recorded.*missing"):
+                find_staged_files(
+                    root,
+                    provider="copernicus-cds",
+                    suffix=".nc",
+                )
+
     def test_stage_local_copies_and_records_checksum(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

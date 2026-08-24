@@ -8,7 +8,6 @@ import numpy as np
 from idragather.models import BoundingBox
 from idragather.providers.soilgrids import DEPTHS, PROPERTIES
 from idragather.soilgrids_normalize import (
-    find_staged_files,
     normalize_soilgrids_arrays,
     normalize_soilgrids_files,
 )
@@ -90,18 +89,6 @@ class SoilGridsNormalizeTests(unittest.TestCase):
         result = normalize_soilgrids_arrays(raw, masks, fill_nodata=False)
         self.assertEqual(result.filled_nodata_cells, 0)
         self.assertEqual(result.zone_ids[1, 1], 0)
-
-    def test_staged_set_must_contain_all_36_coverages(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary) / "raw" / "soil" / "soilgrids"
-            directory.mkdir(parents=True)
-            for depth in DEPTHS:
-                for name in PROPERTIES:
-                    (directory / f"{name}_{depth}_mean.tif").touch()
-            self.assertEqual(len(find_staged_files(temporary)), 36)
-            (directory / "soc_100-200cm_mean.tif").unlink()
-            with self.assertRaisesRegex(ValueError, "Incomplete SoilGrids input"):
-                find_staged_files(temporary)
 
     def test_gdal_pipeline_writes_polygon_profiles(self):
         try:

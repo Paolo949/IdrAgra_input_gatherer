@@ -45,24 +45,6 @@ class SoilNormalizationResult:
     filled_nodata_cells: int
 
 
-def find_staged_files(root: str | Path) -> tuple[Path, ...]:
-    """Return a complete, canonically ordered SoilGrids mean-coverage set."""
-
-    directory = Path(root).resolve() / "raw" / "soil" / "soilgrids"
-    paths = tuple(
-        directory / f"{name}_{depth}_mean.tif"
-        for depth in DEPTHS
-        for name in PROPERTIES
-    )
-    missing = [path.name for path in paths if not path.is_file()]
-    if missing:
-        preview = ", ".join(missing[:5])
-        if len(missing) > 5:
-            preview += f", and {len(missing) - 5} more"
-        raise ValueError(f"Incomplete SoilGrids input in {directory}; missing {preview}")
-    return paths
-
-
 def normalize_soilgrids_arrays(
     raw: Mapping[tuple[str, str], np.ndarray],
     valid_masks: Mapping[tuple[str, str], np.ndarray] | None = None,
@@ -407,6 +389,8 @@ def _read_rasters(paths: tuple[Path, ...]):
             reference_shape = shape
             reference_transform = transform
             reference_projection = projection
+        elif reference_transform is None or reference_projection is None:
+            raise RuntimeError("missing reference metadata for SoilGrids alignment check")
         elif (
             shape != reference_shape
             or not np.allclose(transform, reference_transform, rtol=0.0, atol=1e-9)

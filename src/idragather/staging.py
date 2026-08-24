@@ -9,6 +9,34 @@ from .models import BoundingBox
 CATEGORIES = ("weather", "soil", "landuse", "topography")
 
 
+# Each project keeps one dataset per provider; resolve its files without relying on storage paths.
+def find_staged_files(
+    root: str | Path,
+    *,
+    provider: str,
+    suffix: str | None = None,
+) -> tuple[Path, ...]:
+    root_path = Path(root).resolve()
+    paths: list[Path] = []
+    for asset in Manifest(root_path).read().get("assets", []):
+        if asset.get("provider") != provider:
+            continue
+        path = root_path / asset["path"]
+        if suffix is None or path.suffix == suffix:
+            paths.append(path)
+
+    if not paths:
+        file_type = f" {suffix}" if suffix is not None else ""
+        raise ValueError(f"No staged{file_type} files found for provider {provider!r}")
+
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        names = ", ".join(path.name for path in missing)
+        raise ValueError(f"Staged files recorded for provider {provider!r} are missing: {names}")
+
+    return tuple(sorted(paths))
+
+
 class StagingArea:
     def __init__(self, root: str | Path):
         self.root = Path(root).resolve()

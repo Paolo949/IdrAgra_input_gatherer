@@ -85,7 +85,7 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("_remove_project_layers_for_path", plugin)
         self.assertIn("root.insertGroup(0, LAYER_GROUP)", plugin)
         self.assertIn("root.insertChildNode(0, group)", plugin)
-        self.assertIn("find_staged_eobs_files", plugin)
+        self.assertIn("find_staged_files", plugin)
         self.assertIn("common_date_coverage", plugin)
         self.assertIn("QStackedWidget", dialog)
         self.assertIn("Add outputs from completed actions to QGIS", dialog)
