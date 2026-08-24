@@ -32,7 +32,7 @@ from .core.era5_normalize import normalize_era5_files
 from .core.eobs_normalize import common_date_coverage, normalize_eobs_files
 from .core.models import BoundingBox, DateWindow
 from .core.providers.corine import fetch as fetch_corine
-from .core.providers.era5_land import fetch, plan_jobs, write_plan
+from .core.providers.era5_land import fetch, write_plan
 from .core.providers.eobs import fetch as fetch_eobs
 from .core.providers.soilgrids import ensure_raster_crs as ensure_soilgrids_raster_crs
 from .core.providers.soilgrids import fetch as fetch_soilgrids
@@ -61,6 +61,7 @@ class AcquisitionReporter(QObject):
     status = pyqtSignal(str)
 
 
+# Runs the acquisition and/or normalization workflow for either weather/soil/landuse/topography
 def _run_acquisition(task, request):
     bbox = BoundingBox(*request["bbox"])
     window = DateWindow.from_iso(request["start"], request["end"])
@@ -70,247 +71,29 @@ def _run_acquisition(task, request):
     load_paths = [aoi_path]
     task.setProgress(5)
 
-    source = request["weather_source"]
-    if source == "era5-plan":
-        outputs.append(write_plan(request["output"], bbox, window))
-        task.setProgress(80)
-    elif source in {"era5-download", "era5-normalize"}:
-        report_status = request.get("status_callback")
+    match request["action"]:
+        case "weather-acquire" | "weather-transform" | "weather-both":
+            new_outputs, new_load_paths = _process_weather(task, request, bbox, window)
+        case "soil-acquire" | "soil-transform" | "soil-both":
+            new_outputs, new_load_paths = _process_soil(task, request, bbox)
+        case "landuse-acquire" | "landuse-transform" | "landuse-both":
+            new_outputs, new_load_paths = _process_landuse(task, request, bbox)
+        case "topography-stage":
+            new_outputs, new_load_paths = [], []
+        case unknown_action:
+            raise ValueError(f"Unknown acquisition action: {unknown_action}")
 
-        def update_progress(done, total, _path):
-            task.setProgress(5 + 80 * done / total)
-
-        def update_status(message):
-            if report_status is not None:
-                report_status("CDS: " + message)
-            lowered = message.lower()
-            if "download" in lowered:
-                task.setProgress(max(task.progress(), 65))
-            elif "running" in lowered:
-                task.setProgress(max(task.progress(), 25))
-            elif "accepted" in lowered or "queue" in lowered or "submitting" in lowered:
-                task.setProgress(max(task.progress(), 10))
-
-        if source == "era5-download":
-            weather_outputs = fetch(
-                    request["output"],
-                    bbox,
-                    window,
-                    is_cancelled=task.isCanceled,
-                    on_progress=update_progress,
-                    on_status=update_status,
-            )
-        else:
-            weather_outputs = find_staged_files(
-                request["output"],
-                provider="copernicus-cds",
-                suffix=".nc",
-            )
-            if report_status is not None:
-                report_status(
-                    f"Normalize: found {len(weather_outputs)} staged NetCDF file(s)."
-                )
-        outputs.extend(weather_outputs)
-        if request.get("normalize_weather", True) and not task.isCanceled():
-            task.setProgress(max(task.progress(), 88))
-
-            def normalization_status(message):
-                if report_status is not None:
-                    report_status("Normalize: " + message)
-
-            normalized = normalize_era5_files(
-                weather_outputs,
-                request["output"],
-                window,
-                timezone_name=request.get("timezone", "Europe/Rome"),
-                on_status=normalization_status,
-            )
-            outputs.append(normalized.path)
-            load_paths.append(normalized.path)
-            if report_status is not None:
-                for warning in normalized.warnings:
-                    report_status("WARNING: " + warning)
-            task.setProgress(96)
-        else:
-            load_paths.extend(weather_outputs)
-    elif source in {"eobs-download", "eobs-normalize"}:
-        report_status = request.get("status_callback")
-
-        def eobs_progress(done, total, _path):
-            task.setProgress(5 + 80 * done / total)
-
-        def eobs_status(message):
-            if report_status is not None:
-                report_status("E-OBS: " + message)
-
-        if source == "eobs-download":
-            weather_outputs = fetch_eobs(
-                request["output"],
-                bbox,
-                window,
-                is_cancelled=task.isCanceled,
-                on_progress=eobs_progress,
-                on_status=eobs_status,
-            )
-        else:
-            weather_outputs = find_staged_files(
-                request["output"],
-                provider="eobs-knmi",
-                suffix=".nc",
-            )
-            eobs_status(f"Found {len(weather_outputs)} staged NetCDF file(s).")
-
-        # Raw-only acquisition has no normalization result in which to report
-        # truncated provisional coverage, so surface it explicitly here.
-        if not task.isCanceled() and not request.get("normalize_weather", True):
-            coverage = common_date_coverage(weather_outputs)
-            if coverage.start > window.start or coverage.end < window.end:
-                eobs_status(
-                    "WARNING: The staged provisional files cover "
-                    f"{coverage.start} to {coverage.end}, not the full requested "
-                    f"interval {window.start} to {window.end}. Normalization will "
-                    "use the common available dates."
-                )
-
-        outputs.extend(weather_outputs)
-        if request.get("normalize_weather", True) and not task.isCanceled():
-            task.setProgress(max(task.progress(), 88))
-
-            def eobs_normalization_status(message):
-                if report_status is not None:
-                    report_status("Normalize: " + message)
-
-            normalized = normalize_eobs_files(
-                weather_outputs,
-                request["output"],
-                bbox,
-                window,
-                on_status=eobs_normalization_status,
-            )
-            outputs.append(normalized.path)
-            load_paths.append(normalized.path)
-            if report_status is not None:
-                for warning in normalized.warnings:
-                    report_status("WARNING: " + warning)
-            task.setProgress(96)
-        else:
-            load_paths.extend(weather_outputs)
+    outputs.extend(new_outputs)
+    load_paths.extend(new_load_paths)
     if task.isCanceled():
         return {"cancelled": True, "outputs": [str(path) for path in outputs]}
 
-    soil_outputs = []
-    if request.get("soil_source") == SOIL_SOURCE_SOILGRIDS:
-        report_status = request.get("status_callback")
-
-        def soil_progress(done, total, _path):
-            task.setProgress(max(task.progress(), 96 + 3 * done / total))
-
-        def soil_status(message):
-            if report_status is not None:
-                report_status("SoilGrids: " + message)
-
-        soil_outputs = fetch_soilgrids(
-            request["output"], bbox,
-            is_cancelled=task.isCanceled, on_progress=soil_progress,
-            on_status=soil_status,
-        )
-        outputs.extend(soil_outputs)
-        if not request.get("normalize_soil"):
-            load_paths.extend(soil_outputs)
-
-    if task.isCanceled():
-        return {"cancelled": True, "outputs": [str(path) for path in outputs]}
-
-    if request.get("normalize_soil") and not task.isCanceled():
-        report_status = request.get("status_callback")
-        if not soil_outputs:
-            soil_outputs = list(
-                find_staged_files(
-                    request["output"],
-                    provider="isric-soilgrids-wcs",
-                    suffix=".tif",
-                )
-            )
-        task.setProgress(max(task.progress(), 96))
-
-        def soil_normalization_status(message):
-            if report_status is not None:
-                report_status("Normalize soil: " + message)
-
-        normalized_soil = normalize_soilgrids_files(
-            soil_outputs,
-            request["output"],
-            bbox=bbox,
-            max_classes=request.get("soil_max_classes", 20),
-            on_status=soil_normalization_status,
-        )
-        outputs.append(normalized_soil.path)
-        load_paths.append(normalized_soil.path)
-        if report_status is not None:
-            report_status(
-                "Normalize soil: wrote "
-                f"{normalized_soil.polygon_count} polygon(s) for "
-                f"{normalized_soil.profile_count} class(es), condensed from "
-                f"{normalized_soil.exact_profile_count} exact profile(s); filled "
-                f"{normalized_soil.filled_nodata_cells} NoData cell(s) to cover the AOI."
-            )
-        task.setProgress(99)
-
-    landuse_outputs = []
-    if request.get("landuse_source") == LANDUSE_SOURCE_CORINE:
-        report_status = request.get("status_callback")
-
-        def landuse_progress(done, total, _path):
-            task.setProgress(max(task.progress(), 95 + 4 * done / total))
-
-        def landuse_status(message):
-            if report_status is not None:
-                report_status("CORINE: " + message)
-
-        landuse_outputs = fetch_corine(
-            request["output"],
-            bbox,
-            is_cancelled=task.isCanceled,
-            on_progress=landuse_progress,
-            on_status=landuse_status,
-        )
-        outputs.extend(landuse_outputs)
-        if not request.get("normalize_landuse"):
-            load_paths.extend(landuse_outputs)
-
-    if task.isCanceled():
-        return {"cancelled": True, "outputs": [str(path) for path in outputs]}
-
-    if request.get("normalize_landuse"):
-        report_status = request.get("status_callback")
-        if not landuse_outputs:
-            landuse_outputs = list(
-                find_staged_files(
-                    request["output"],
-                    provider="eea-corine-arcgis-rest",
-                    suffix=".geojson",
-                )
-            )
-
-        def landuse_normalization_status(message):
-            if report_status is not None:
-                report_status("Normalize land use: " + message)
-
-        normalized_landuse = normalize_corine_file(
-            landuse_outputs[0],
-            request["output"],
-            bbox=bbox,
-            on_status=landuse_normalization_status,
-        )
-        outputs.append(normalized_landuse.path)
-        load_paths.append(normalized_landuse.path)
-        task.setProgress(99)
-    
     for category, source_path in request["local_files"].items():
         if source_path:
             staged_path = staging.stage_local(source_path, category=category)
             outputs.append(staged_path)
             load_paths.append(staged_path)
+
     manifest_path = Path(request["output"]) / "manifest.json"
     if manifest_path.exists():
         outputs.append(manifest_path)
@@ -321,6 +104,223 @@ def _run_acquisition(task, request):
         "outputs": [str(path) for path in outputs],
         "load_paths": [str(path) for path in load_paths],
     }
+
+
+# Select and run the requested weather provider workflow.
+def _process_weather(task, request, bbox, window):
+    source = request.get("weather_source")
+    if source is None:
+        return [], []
+    if source == "era5-plan":
+        task.setProgress(80)
+        return [write_plan(request["output"], bbox, window)], []
+    if source in {"era5-download", "era5-normalize"}:
+        return _process_era5_weather(task, request, bbox, window)
+    if source in {"eobs-download", "eobs-normalize"}:
+        return _process_eobs_weather(task, request, bbox, window)
+    return [], []
+
+
+# Fetch or locate ERA5-Land files, then normalize them when requested.
+def _process_era5_weather(task, request, bbox, window):
+    def update_progress(done, total, _path):
+        task.setProgress(5 + 80 * done / total)
+
+    def update_status(message):
+        _report_status(request, "CDS: ", message)
+        lowered = message.lower()
+        if "download" in lowered:
+            task.setProgress(max(task.progress(), 65))
+        elif "running" in lowered:
+            task.setProgress(max(task.progress(), 25))
+        elif "accepted" in lowered or "queue" in lowered or "submitting" in lowered:
+            task.setProgress(max(task.progress(), 10))
+
+    if request["weather_source"] == "era5-download":
+        raw_paths = fetch(
+            request["output"],
+            bbox,
+            window,
+            is_cancelled=task.isCanceled,
+            on_progress=update_progress,
+            on_status=update_status,
+        )
+    else:
+        raw_paths = find_staged_files(
+            request["output"],
+            provider="copernicus-cds",
+            suffix=".nc",
+        )
+        _report_status(
+            request,
+            "Normalize: ",
+            f"found {len(raw_paths)} staged NetCDF file(s).",
+        )
+
+    outputs = list(raw_paths)
+    if not request.get("normalize_weather", True) or task.isCanceled():
+        return outputs, list(raw_paths)
+
+    task.setProgress(max(task.progress(), 88))
+    normalized = normalize_era5_files(
+        raw_paths,
+        request["output"],
+        window,
+        timezone_name=request.get("timezone", "Europe/Rome"),
+        on_status=lambda message: _report_status(request, "Normalize: ", message),
+    )
+    outputs.append(normalized.path)
+    for warning in normalized.warnings:
+        _report_status(request, "WARNING: ", warning)
+    task.setProgress(96)
+    return outputs, [normalized.path]
+
+
+# Fetch or locate E-OBS files, then normalize them when requested.
+def _process_eobs_weather(task, request, bbox, window):
+    def update_progress(done, total, _path):
+        task.setProgress(5 + 80 * done / total)
+
+    def update_status(message):
+        _report_status(request, "E-OBS: ", message)
+
+    if request["weather_source"] == "eobs-download":
+        raw_paths = fetch_eobs(
+            request["output"],
+            bbox,
+            window,
+            is_cancelled=task.isCanceled,
+            on_progress=update_progress,
+            on_status=update_status,
+        )
+    else:
+        raw_paths = find_staged_files(
+            request["output"],
+            provider="eobs-knmi",
+            suffix=".nc",
+        )
+        update_status(f"Found {len(raw_paths)} staged NetCDF file(s).")
+
+    outputs = list(raw_paths)
+    if not request.get("normalize_weather", True) and not task.isCanceled():
+        coverage = common_date_coverage(raw_paths)
+        if coverage.start > window.start or coverage.end < window.end:
+            update_status(
+                "WARNING: The staged provisional files cover "
+                f"{coverage.start} to {coverage.end}, not the full requested "
+                f"interval {window.start} to {window.end}. Normalization will "
+                "use the common available dates."
+            )
+
+    if not request.get("normalize_weather", True) or task.isCanceled():
+        return outputs, list(raw_paths)
+
+    task.setProgress(max(task.progress(), 88))
+    normalized = normalize_eobs_files(
+        raw_paths,
+        request["output"],
+        bbox,
+        window,
+        on_status=lambda message: _report_status(request, "Normalize: ", message),
+    )
+    outputs.append(normalized.path)
+    for warning in normalized.warnings:
+        _report_status(request, "WARNING: ", warning)
+    task.setProgress(96)
+    return outputs, [normalized.path]
+
+
+# Fetch or locate SoilGrids rasters, then normalize them when requested.
+def _process_soil(task, request, bbox):
+    raw_paths = []
+    if request.get("soil_source") == SOIL_SOURCE_SOILGRIDS:
+        raw_paths = fetch_soilgrids(
+            request["output"],
+            bbox,
+            is_cancelled=task.isCanceled,
+            on_progress=lambda done, total, _path: task.setProgress(
+                max(task.progress(), 96 + 3 * done / total)
+            ),
+            on_status=lambda message: _report_status(request, "SoilGrids: ", message),
+        )
+
+    outputs = list(raw_paths)
+    if not request.get("normalize_soil") or task.isCanceled():
+        return outputs, list(raw_paths)
+    if not raw_paths:
+        raw_paths = list(
+            find_staged_files(
+                request["output"],
+                provider="isric-soilgrids-wcs",
+                suffix=".tif",
+            )
+        )
+
+    task.setProgress(max(task.progress(), 96))
+    normalized = normalize_soilgrids_files(
+        raw_paths,
+        request["output"],
+        bbox=bbox,
+        max_classes=request.get("soil_max_classes", 20),
+        on_status=lambda message: _report_status(request, "Normalize soil: ", message),
+    )
+    outputs.append(normalized.path)
+    _report_status(
+        request,
+        "Normalize soil: ",
+        f"wrote {normalized.polygon_count} polygon(s) for "
+        f"{normalized.profile_count} class(es), condensed from "
+        f"{normalized.exact_profile_count} exact profile(s); filled "
+        f"{normalized.filled_nodata_cells} NoData cell(s) to cover the AOI.",
+    )
+    task.setProgress(99)
+    return outputs, [normalized.path]
+
+
+# Fetch or locate CORINE polygons, then normalize them when requested.
+def _process_landuse(task, request, bbox):
+    raw_paths = []
+    if request.get("landuse_source") == LANDUSE_SOURCE_CORINE:
+        raw_paths = fetch_corine(
+            request["output"],
+            bbox,
+            is_cancelled=task.isCanceled,
+            on_progress=lambda done, total, _path: task.setProgress(
+                max(task.progress(), 95 + 4 * done / total)
+            ),
+            on_status=lambda message: _report_status(request, "CORINE: ", message),
+        )
+
+    outputs = list(raw_paths)
+    if not request.get("normalize_landuse") or task.isCanceled():
+        return outputs, list(raw_paths)
+    if not raw_paths:
+        raw_paths = list(
+            find_staged_files(
+                request["output"],
+                provider="eea-corine-arcgis-rest",
+                suffix=".geojson",
+            )
+        )
+
+    normalized = normalize_corine_file(
+        raw_paths[0],
+        request["output"],
+        bbox=bbox,
+        on_status=lambda message: _report_status(
+            request, "Normalize land use: ", message
+        ),
+    )
+    outputs.append(normalized.path)
+    task.setProgress(99)
+    return outputs, [normalized.path]
+
+
+# Forward a worker message to the dialog when a status callback is available.
+def _report_status(request, prefix, message):
+    callback = request.get("status_callback")
+    if callback is not None:
+        callback(prefix + message)
 
 
 class IdrAgraGatherPlugin:
@@ -336,40 +336,48 @@ class IdrAgraGatherPlugin:
         self.reporter = None
 
     def initGui(self):
-        self.action = QAction("Gather IdrAgra inputs…", self.iface.mainWindow())
-        self.action.setToolTip("Draw an area and gather raw IdrAgra inputs")
-        self.action.triggered.connect(self.show_dialog)
-        self.iface.addPluginToMenu(MENU_NAME, self.action)
-        self.iface.addToolBarIcon(self.action)
+        action = QAction("Gather IdrAgra inputs…", self.iface.mainWindow())
+        action.setToolTip("Draw an area and gather raw IdrAgra inputs")
+        action.triggered.connect(self.show_dialog)
+        self.iface.addPluginToMenu(MENU_NAME, action)
+        self.iface.addToolBarIcon(action)
+        self.action = action
 
     def unload(self):
-        if self.action is not None:
-            self.iface.removePluginMenu(MENU_NAME, self.action)
-            self.iface.removeToolBarIcon(self.action)
+        action = self.action
+        if action is not None:
+            self.iface.removePluginMenu(MENU_NAME, action)
+            self.iface.removeToolBarIcon(action)
         if self.canvas.mapTool() is self.map_tool:
             self.iface.actionPan().trigger()
         self.map_tool.clear()
-        if self.dialog is not None:
-            self.dialog.close()
+        dialog = self.dialog
+        if dialog is not None:
+            dialog.close()
 
     def show_dialog(self):
-        if self.dialog is None:
-            self.dialog = AcquisitionDialog(self.iface.mainWindow())
-            self.dialog.drawRequested.connect(self._start_drawing)
-            self.dialog.canvasExtentRequested.connect(self._use_canvas_extent)
-            self.dialog.runRequested.connect(self._run)
-            self.dialog.finished.connect(self._dialog_closed)
+        dialog = self.dialog
+        if dialog is None:
+            dialog = AcquisitionDialog(self.iface.mainWindow())
+            dialog.drawRequested.connect(self._start_drawing)
+            dialog.canvasExtentRequested.connect(self._use_canvas_extent)
+            dialog.runRequested.connect(self._run)
+            dialog.finished.connect(self._dialog_closed)
             settings = QSettings()
-            default_output = QgsProject.instance().homePath() or QDir.homePath()
-            self.dialog.set_output_folder(
+            default_output = _qgis_project().homePath() or QDir.homePath()
+            dialog.set_output_folder(
                 settings.value("IdrAgraGather/output", default_output, type=str)
             )
-        self.dialog.show()
-        self.dialog.raise_()
-        self.dialog.activateWindow()
+            self.dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _start_drawing(self):
-        self.dialog.hide()
+        dialog = self.dialog
+        if dialog is None:
+            return
+        dialog.hide()
         self.iface.messageBar().pushMessage(
             "IdrAgra Input Gatherer",
             "Drag a rectangle on the map; press Esc to cancel.",
@@ -400,19 +408,26 @@ class IdrAgraGatherPlugin:
             transform = QgsCoordinateTransform(
                 source_crs,
                 target_crs,
-                QgsProject.instance().transformContext(),
+                _qgis_project().transformContext(),
             )
             geometry.transform(transform)
         bbox = geometry.boundingBox()
-        self.dialog.set_bbox(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum())
-        self.dialog.append_log("Study area selected in EPSG:4326.")
+        dialog = self.dialog
+        if dialog is not None:
+            dialog.set_bbox(
+                bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()
+            )
+            dialog.append_log("Study area selected in EPSG:4326.")
 
     def _run(self, action):
         if self.task is not None:
             self._show_error("An acquisition task is already running.")
             return
+        dialog = self.dialog
+        if dialog is None:
+            return
         try:
-            request = self.dialog.request(action)
+            request = dialog.request(action)
         except Exception as exc:
             self._show_error(str(exc))
             return
@@ -430,11 +445,13 @@ class IdrAgraGatherPlugin:
                     MESSAGE_BUTTON.No,
                 )
                 if answer != MESSAGE_BUTTON.Yes:
-                    self.dialog.append_log("Transformation cancelled; existing normalized data kept.")
+                    dialog.append_log(
+                        "Transformation cancelled; existing normalized data kept."
+                    )
                     return
                 removed = self._remove_project_layers_for_path(normalized_path)
                 if removed:
-                    self.dialog.append_log(
+                    dialog.append_log(
                         f"Removed {removed} loaded normalized layer(s) before overwrite."
                     )
                     # Let QGIS dispose its providers before the worker attempts to
@@ -454,11 +471,13 @@ class IdrAgraGatherPlugin:
                     MESSAGE_BUTTON.No,
                 )
                 if answer != MESSAGE_BUTTON.Yes:
-                    self.dialog.append_log("Transformation cancelled; existing normalized soil data kept.")
+                    dialog.append_log(
+                        "Transformation cancelled; existing normalized soil data kept."
+                    )
                     return
                 removed = self._remove_project_layers_for_path(normalized_path)
                 if removed:
-                    self.dialog.append_log(
+                    dialog.append_log(
                         f"Removed {removed} loaded normalized soil layer(s) before overwrite."
                     )
                     QCoreApplication.processEvents()
@@ -476,59 +495,63 @@ class IdrAgraGatherPlugin:
                     MESSAGE_BUTTON.No,
                 )
                 if answer != MESSAGE_BUTTON.Yes:
-                    self.dialog.append_log(
+                    dialog.append_log(
                         "Transformation cancelled; existing normalized land-use data kept."
                     )
                     return
                 removed = self._remove_project_layers_for_path(normalized_path)
                 if removed:
-                    self.dialog.append_log(
+                    dialog.append_log(
                         f"Removed {removed} loaded normalized land-use layer(s) before overwrite."
                     )
                     QCoreApplication.processEvents()
 
         QSettings().setValue("IdrAgraGather/output", request["output"])
-        self.dialog.set_running(True)
-        self.dialog.append_log(f"Task started: {action}.")
-        self.reporter = AcquisitionReporter(self.iface.mainWindow())
-        self.reporter.status.connect(self._append_task_status)
-        request["status_callback"] = self.reporter.status.emit
-        self.task = QgsTask.fromFunction(
+        dialog.set_running(True)
+        dialog.append_log(f"Task started: {action}.")
+        reporter = AcquisitionReporter(self.iface.mainWindow())
+        reporter.status.connect(self._append_task_status)
+        request["status_callback"] = reporter.status.emit
+        self.reporter = reporter
+        worker_task = QgsTask.fromFunction(
             f"IdrAgra: {action}",
             _run_acquisition,
             on_finished=self._task_finished,
             request=request,
         )
-        QgsApplication.taskManager().addTask(self.task)
+        self.task = worker_task
+        _qgis_task_manager().addTask(worker_task)
 
     def _task_finished(self, exception, result=None):
         self.task = None
-        if self.reporter is not None:
-            self.reporter.deleteLater()
+        reporter = self.reporter
+        if reporter is not None:
+            reporter.deleteLater()
             self.reporter = None
-        if self.dialog is not None:
-            self.dialog.set_running(False)
-            self.dialog.refresh_status()
+        dialog = self.dialog
+        if dialog is not None:
+            dialog.set_running(False)
+            dialog.refresh_status()
         if exception is not None:
             message = str(exception)
-            if self.dialog is not None:
-                self.dialog.append_log("ERROR: " + message)
+            if dialog is not None:
+                dialog.append_log("ERROR: " + message)
             self._show_error(message)
             return
         if not result or result.get("cancelled"):
-            if self.dialog is not None:
-                self.dialog.append_log("Acquisition cancelled; completed files were kept.")
+            if dialog is not None:
+                dialog.append_log("Acquisition cancelled; completed files were kept.")
             return
 
         outputs = [Path(path) for path in result["outputs"]]
-        if self.dialog is not None:
-            self.dialog.append_log(f"Completed: {len(outputs)} output file(s).")
+        if dialog is not None:
+            dialog.append_log(f"Completed: {len(outputs)} output file(s).")
         loaded = 0
         if result.get("load_results"):
             for path in (Path(path) for path in result.get("load_paths", [])):
                 loaded += self._load_spatial_file(path)
-            if self.dialog is not None:
-                self.dialog.append_log(f"Loaded {loaded} QGIS layer(s).")
+            if dialog is not None:
+                dialog.append_log(f"Loaded {loaded} QGIS layer(s).")
         self.iface.messageBar().pushMessage(
             "IdrAgra Input Gatherer",
             "Input gathering completed.",
@@ -537,8 +560,9 @@ class IdrAgraGatherPlugin:
         )
 
     def _append_task_status(self, message):
-        if self.dialog is not None:
-            self.dialog.append_log(str(message))
+        dialog = self.dialog
+        if dialog is not None:
+            dialog.append_log(str(message))
 
     def _load_spatial_file(self, path):
         if path.suffix.lower() == ".nc":
@@ -570,9 +594,9 @@ class IdrAgraGatherPlugin:
         # in Windows paths, particularly for Shapefiles with spaces in a parent
         # directory name.
         vector_uri = Path(path).resolve().as_posix()
-        details = QgsProviderRegistry.instance().querySublayers(vector_uri)
+        details = _qgis_provider_registry().querySublayers(vector_uri)
         options = QgsProviderSublayerDetails.LayerOptions(
-            QgsProject.instance().transformContext()
+            _qgis_project().transformContext()
         )
         loaded = 0
         for detail in details:
@@ -591,9 +615,10 @@ class IdrAgraGatherPlugin:
                 self._style_normalized_landuse_layer(layer, path)
                 self._add_layer(layer, path)
                 return 1
-            if self.dialog is not None:
+            dialog = self.dialog
+            if dialog is not None:
                 provider_error = layer.error().summary() or "OGR returned no details"
-                self.dialog.append_log(
+                dialog.append_log(
                     f"WARNING: QGIS could not load vector output {path}: {provider_error}"
                 )
         return loaded
@@ -635,9 +660,9 @@ class IdrAgraGatherPlugin:
         layer.triggerRepaint()
 
     def _load_netcdf_sublayers(self, path):
-        details = QgsProviderRegistry.instance().querySublayers(str(path))
+        details = _qgis_provider_registry().querySublayers(str(path))
         options = QgsProviderSublayerDetails.LayerOptions(
-            QgsProject.instance().transformContext()
+            _qgis_project().transformContext()
         )
         loaded = 0
         for detail in details:
@@ -681,8 +706,9 @@ class IdrAgraGatherPlugin:
             layer, path, variable_name, bounds, wgs84
         )
         if repaired is not None:
-            if self.dialog is not None:
-                self.dialog.append_log(
+            dialog = self.dialog
+            if dialog is not None:
+                dialog.append_log(
                     f"Display: repaired missing NetCDF georeferencing for {path.name}."
                 )
             return repaired
@@ -843,19 +869,28 @@ class IdrAgraGatherPlugin:
                 "outline_width": "0.8",
             }
         )
-        layer.renderer().setSymbol(symbol)
+        renderer = layer.renderer()
+        if renderer is None:
+            return
+        renderer.setSymbol(symbol)
         layer.triggerRepaint()
 
     @staticmethod
     def _add_layer(layer, path):
-        project = QgsProject.instance()
+        project = _qgis_project()
         root = project.layerTreeRoot()
+        if root is None:
+            raise RuntimeError("The QGIS project has no layer tree.")
         group = root.findGroup(LAYER_GROUP)
         if group is None:
             group = root.insertGroup(0, LAYER_GROUP)
+            if group is None:
+                raise RuntimeError("QGIS could not create the input layer group.")
         elif root.children() and root.children()[0] is not group:
             # Keep gathered inputs above basemaps and pre-existing project layers.
-            group.parent().takeChild(group)
+            parent = group.parent()
+            if parent is not None:
+                parent.takeChild(group)
             root.insertChildNode(0, group)
         target_group = group
         subgroup_name, is_raw = IdrAgraGatherPlugin._subgroup_for_path(path)
@@ -863,6 +898,8 @@ class IdrAgraGatherPlugin:
             target_group = group.findGroup(subgroup_name)
             if target_group is None:
                 target_group = group.addGroup(subgroup_name)
+                if target_group is None:
+                    raise RuntimeError("QGIS could not create an input subgroup.")
                 target_group.setExpanded(not is_raw)
             # Keep raw groups collapsed, but visible, so acquisition results
             # appear on the map without another manual toggle. This also repairs
@@ -875,14 +912,15 @@ class IdrAgraGatherPlugin:
     def _remove_project_layers_for_path(path):
         """Remove loaded layers backed by *path* and return the number removed."""
         target = os.path.normcase(os.path.abspath(str(path)))
+        project = _qgis_project()
         layer_ids = []
-        for layer_id, layer in QgsProject.instance().mapLayers().items():
+        for layer_id, layer in project.mapLayers().items():
             # OGR sources append options such as ``|layername=...``.
             source_path = str(layer.source()).split("|", 1)[0]
             if os.path.normcase(os.path.abspath(source_path)) == target:
                 layer_ids.append(layer_id)
         if layer_ids:
-            QgsProject.instance().removeMapLayers(layer_ids)
+            project.removeMapLayers(layer_ids)
         return len(layer_ids)
 
     @staticmethod
@@ -903,3 +941,27 @@ class IdrAgraGatherPlugin:
     def _dialog_closed(self):
         if self.canvas.mapTool() is self.map_tool:
             self.iface.actionPan().trigger()
+
+
+# Return the active QGIS project or fail clearly during incomplete initialization.
+def _qgis_project():
+    project = QgsProject.instance()
+    if project is None:
+        raise RuntimeError("No active QGIS project is available.")
+    return project
+
+
+# Return the QGIS provider registry or fail clearly during incomplete initialization.
+def _qgis_provider_registry():
+    registry = QgsProviderRegistry.instance()
+    if registry is None:
+        raise RuntimeError("The QGIS provider registry is unavailable.")
+    return registry
+
+
+# Return the QGIS task manager or fail clearly during incomplete initialization.
+def _qgis_task_manager():
+    manager = QgsApplication.taskManager()
+    if manager is None:
+        raise RuntimeError("The QGIS task manager is unavailable.")
+    return manager
