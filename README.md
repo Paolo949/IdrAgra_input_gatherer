@@ -38,8 +38,12 @@ The workspace lets the user:
 8. normalize SoilGrids into editable full-profile polygons without applying a PTF;
 9. download CORINE Land Cover 2018 polygons intersecting the AOI as GeoJSON;
 10. normalize CORINE codes into readable, categorized land-use polygons;
-11. run acquisition and normalization independently or consecutively;
-12. load raw layers into collapsed, visible category groups such as `weather_raw`
+11. download AOI-clipped Copernicus DEM GLO-30 or GLO-90 elevation through the
+   Sentinel Hub Process API;
+12. normalize the DEM into aligned metric elevation-above-sea-level and percent-
+   slope rasters;
+13. run acquisition and normalization independently or consecutively;
+14. load raw layers into collapsed, visible category groups such as `weather_raw`
    and `soil_raw`; numeric rasters use a first-band pseudocolor stretch so time
    bands are not mistaken for RGB channels. Geographic NetCDF grids are detected
    from their longitude/latitude axes and assigned WGS 84 automatically. If a
@@ -68,6 +72,9 @@ ERA5 download mode requires `cdsapi` in QGIS's Python environment and valid CDS
 credentials. E-OBS does not require credentials. It uses GDAL HTTP range reads
 to save only the requested AOI/date subset from the much larger official
 NetCDF files, and requires confirmation of the E-OBS non-commercial-use terms.
+Copernicus DEM download requires a free CDSE account and a Sentinel Hub OAuth
+client. Its client ID and secret can be entered in the Topography page or
+provided as `SH_CLIENT_ID` and `SH_CLIENT_SECRET`; the dialog does not save them.
 
 ## Why the weather schema looks this way
 
@@ -105,12 +112,17 @@ sampling/interpolation rules are known.
   REST service, retaining the published `Code_18` classification;
 - CORINE normalization into an AOI-clipped minimal `landuse.shp`, categorized
   by the official readable level-three class name;
+- tiled Copernicus DEM GLO-30/GLO-90 acquisition through the authenticated
+  Sentinel Hub Process API, retaining Float32 orthometric heights in metres;
+- DEM normalization into `elevation_m_asl.tif` and `slope_pct.tif`, clipped to
+  the AOI and reprojected to its local metric WGS 84 UTM CRS before calculating
+  slope with the Horn algorithm;
 - an installable QGIS dialog with rectangle drawing, planning, background
   acquisition, and result-layer loading.
 
-The raw download remains separate from normalization. The QGIS interface can
-chain them in one run, while keeping the NetCDF files so a different timezone
-or aggregation rule can be applied without downloading again.
+Raw acquisition remains separate from normalization. The QGIS interface can
+chain them in one run while retaining the source NetCDF, GeoJSON, and GeoTIFF
+files, so transformations can be repeated without downloading again.
 
 ## Quick start
 
@@ -154,6 +166,7 @@ study_inputs/
     soil/soilgrids/*.tif
     landuse/corine/clc2018.geojson
     landuse/local/*
+    topography/copernicus_dem/<aoi-and-instance-id>/*.tif
     topography/local/*
   weather/
     weather_daily.csv
@@ -162,6 +175,9 @@ study_inputs/
     soil_profiles.gpkg
   landuse/
     landuse.shp (+ Shapefile sidecars)
+  topography/
+    elevation_m_asl.tif
+    slope_pct.tif
 ```
 
 The GeoPackage contains one `weather_daily_points` layer. Each row represents
@@ -218,6 +234,16 @@ readable [CORINE level-three category](https://land.copernicus.eu/content/corine
 (for example, `Rice fields`). The numeric
 `Code_18`, source identifiers, remarks, and source area estimate are intentionally
 not duplicated. QGIS styles the normalized polygons categorically by `landuse`.
+
+Copernicus DEM normalization produces two co-registered Float32 GeoTIFFs. The
+elevation raster stores EGM2008 orthometric height in metres (including valid
+zero-valued sea pixels), and the slope raster stores percent rise. The API's
+geographic source tiles are mosaicked and clipped, then reprojected to the UTM
+zone containing the AOI centre at the nominal source resolution (30 m or 90 m).
+This metric intermediate form is suitable for either zonal statistics on a
+future regular cell grid or centroid sampling for future vector cells. Source
+tiles, API parameters, output CRS, units, and transformations remain recorded
+in `manifest.json`.
 
 ## Intended QGIS boundary
 

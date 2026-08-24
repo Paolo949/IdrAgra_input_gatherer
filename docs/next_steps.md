@@ -23,12 +23,14 @@ Each increment should stay usable without the later ones.
    - save mappings as small JSON recipes;
    - normalize CSV and station layers through the same weather contract.
 
-4. **Topography**
-   - accept a local DEM first;
-   - clip/resample it in QGIS;
-   - derive cell altitude and slope only when the grid definition is known;
-   - add a remote Copernicus DEM provider only if distribution terms and API
-     stability justify the maintenance cost.
+4. **Topography — Copernicus acquisition and generic rasters implemented**
+   - local DEM staging remains available;
+   - GLO-30 and GLO-90 are acquired from the authenticated Sentinel Hub Process
+     API in bounded-size tiles;
+   - normalization mosaics and clips elevation into a local metric UTM raster
+     and derives an aligned percent-slope raster;
+   - next: sample these rasters only after the regular-grid or free-form-vector
+     simulation-cell definition has been chosen.
 
 5. **Soil and land use — SoilGrids and CORINE normalization implemented**
    - local vector/raster staging and clipping first;

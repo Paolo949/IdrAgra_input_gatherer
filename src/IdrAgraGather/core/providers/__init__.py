@@ -1,3 +1,3 @@
 """Remote data-provider adapters."""
 
-__all__ = ["corine", "eobs", "era5_land", "soilgrids"]
+__all__ = ["copernicus_dem", "corine", "eobs", "era5_land", "soilgrids"]

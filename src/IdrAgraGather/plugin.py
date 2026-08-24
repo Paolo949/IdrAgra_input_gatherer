@@ -31,6 +31,8 @@ from .core.corine_normalize import normalize_corine_file
 from .core.era5_normalize import normalize_era5_files
 from .core.eobs_normalize import common_date_coverage, normalize_eobs_files
 from .core.models import BoundingBox, DateWindow
+from .core.providers.copernicus_dem import fetch as fetch_copernicus_dem
+from .core.providers.copernicus_dem import find_tiles as find_copernicus_dem_tiles
 from .core.providers.corine import fetch as fetch_corine
 from .core.providers.era5_land import fetch, write_plan
 from .core.providers.eobs import fetch as fetch_eobs
@@ -38,10 +40,12 @@ from .core.providers.soilgrids import ensure_raster_crs as ensure_soilgrids_rast
 from .core.providers.soilgrids import fetch as fetch_soilgrids
 from .core.soilgrids_normalize import normalize_soilgrids_files
 from .core.staging import StagingArea, find_staged_files
+from .core.topography_normalize import normalize_dem_files
 from .dialog import (
     AcquisitionDialog,
     LANDUSE_SOURCE_CORINE,
     SOIL_SOURCE_SOILGRIDS,
+    TOPOGRAPHY_SOURCE_COPERNICUS,
 )
 from .map_tool import RectangleMapTool
 
@@ -78,8 +82,8 @@ def _run_acquisition(task, request):
             new_outputs, new_load_paths = _process_soil(task, request, bbox)
         case "landuse-acquire" | "landuse-transform" | "landuse-both":
             new_outputs, new_load_paths = _process_landuse(task, request, bbox)
-        case "topography-stage":
-            new_outputs, new_load_paths = [], []
+        case "topography-acquire" | "topography-transform" | "topography-both":
+            new_outputs, new_load_paths = _process_topography(task, request, bbox)
         case unknown_action:
             raise ValueError(f"Unknown acquisition action: {unknown_action}")
 
@@ -314,6 +318,59 @@ def _process_landuse(task, request, bbox):
     outputs.append(normalized.path)
     task.setProgress(99)
     return outputs, [normalized.path]
+
+
+# Fetch or locate Copernicus DEM tiles, then create metric elevation and slope rasters.
+def _process_topography(task, request, bbox):
+    raw_paths = []
+    instance = request.get("dem_instance", "COPERNICUS_30")
+    if request.get("topography_source") == TOPOGRAPHY_SOURCE_COPERNICUS:
+        raw_paths = fetch_copernicus_dem(
+            request["output"],
+            bbox,
+            instance=instance,
+            client_id=request.get("copernicus_client_id"),
+            client_secret=request.get("copernicus_client_secret"),
+            is_cancelled=task.isCanceled,
+            on_progress=lambda done, total, _path: task.setProgress(
+                max(task.progress(), 5 + 80 * done / total)
+            ),
+            on_status=lambda message: _report_status(
+                request, "Copernicus DEM: ", message
+            ),
+        )
+
+    outputs = list(raw_paths)
+    if not request.get("normalize_topography") or task.isCanceled():
+        return outputs, list(raw_paths)
+    if not raw_paths:
+        raw_paths = list(
+            find_copernicus_dem_tiles(
+                request["output"],
+                bbox,
+                instance=instance,
+            )
+        )
+        _report_status(
+            request,
+            "Normalize topography: ",
+            f"found {len(raw_paths)} staged DEM tile(s).",
+        )
+
+    task.setProgress(max(task.progress(), 88))
+    normalized = normalize_dem_files(
+        raw_paths,
+        request["output"],
+        bbox=bbox,
+        resolution_m=request.get("topography_resolution_m", 30),
+        dem_instance=instance,
+        on_status=lambda message: _report_status(
+            request, "Normalize topography: ", message
+        ),
+    )
+    outputs.extend(normalized.paths)
+    task.setProgress(99)
+    return outputs, list(normalized.paths)
 
 
 # Forward a worker message to the dialog when a status callback is available.

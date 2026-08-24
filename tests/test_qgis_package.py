@@ -21,14 +21,16 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/core/providers/eobs.py", names)
             self.assertIn("IdrAgraGather/core/providers/soilgrids.py", names)
             self.assertIn("IdrAgraGather/core/providers/corine.py", names)
+            self.assertIn("IdrAgraGather/core/providers/copernicus_dem.py", names)
             self.assertIn("IdrAgraGather/core/corine_normalize.py", names)
+            self.assertIn("IdrAgraGather/core/topography_normalize.py", names)
             self.assertIn("IdrAgraGather/core/vector_clip.py", names)
             self.assertIn("IdrAgraGather/core/era5_normalize.py", names)
             self.assertIn("IdrAgraGather/core/eobs_normalize.py", names)
             self.assertIn("IdrAgraGather/core/soilgrids_normalize.py", names)
             self.assertIn("qgisMinimumVersion=3.28", metadata)
             self.assertIn("qgisMaximumVersion=4.99", metadata)
-            self.assertIn("version=0.10.0", metadata)
+            self.assertIn("version=0.11.0", metadata)
             self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))
 
     def test_qgis4_removed_enum_aliases_are_not_used(self):
@@ -64,7 +66,9 @@ class QgisPackageTests(unittest.TestCase):
             "landuse-acquire",
             "landuse-transform",
             "landuse-both",
-            "topography-stage",
+            "topography-acquire",
+            "topography-transform",
+            "topography-both",
         ):
             self.assertIn(action, dialog)
         self.assertIn('return f"{parts[index + 1]}_raw", True', plugin)
@@ -113,6 +117,9 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("self._style_normalized_landuse_layer(layer, path)", plugin)
         self.assertIn('"normalize_landuse"', dialog)
         self.assertIn("WEATHER_SOURCE_EOBS", dialog)
+        self.assertIn("Copernicus DEM", dialog)
+        self.assertIn('"normalize_topography"', dialog)
+        self.assertIn("normalize_dem_files", plugin)
 
 
 if __name__ == "__main__":
