@@ -48,8 +48,23 @@ Each increment should stay usable without the later ones.
    - next: make PTF application an explicit transformation from normalized soil
      profiles to hydraulic or IdrAgra-ready columns.
 
-6. **v3 exporter**
+6. **Simulation-cell view — first implementation complete**
+   - a separate QGIS dialog maintains reusable crop parameter references and
+     zero-, one-, or two-crop annual land-use rotations;
+   - every normalized source class can be allocated to one or more rotations,
+     with shares validated to total 100%;
+   - grid mode creates a canonical cell GeoPackage plus four aligned soil-ID,
+     land-use-ID, elevation, and slope rasters;
+   - categorical values use greatest intersected area, elevation defaults to
+     the median, and slope defaults to the dominant 1% band;
+   - vector mode dissolves contiguous soil/source-land-use combinations and
+     samples topography at their centroids;
+   - next: refine percentage-driven subdivision of large vector regions and
+     add map-preview/summary controls.
+
+7. **v2/v3 exporter**
    - pivot validated daily weather into seven IdrAgra files;
    - verify cell ordering against `cell_info`;
+   - emit v2 regular grids and weather-station weight maps from grid cells;
    - write two header rows and ISO dates exactly as the v3 reader expects;
    - add an integration fixture accepted by the v3 executable/parser.

@@ -1,8 +1,8 @@
 [general]
 name=IdrAgra Input Gatherer
-description=Draw a study-area box and gather raw inputs for an IdrAgra project.
-about=Workspace interface for independently acquiring and transforming weather, soil, land-use, and topography inputs while recording reproducible provenance. It does not export final IdrAgra input files yet.
-version=0.11.0
+description=Gather normalized IdrAgra inputs and build a simulation-cell view.
+about=Workspace interface for independently acquiring and transforming weather, soil, land-use, and topography inputs, then combining them into grid or vector simulation cells with reproducible provenance. It does not export final IdrAgra input files yet.
+version=0.12.1
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 author=RITA tools

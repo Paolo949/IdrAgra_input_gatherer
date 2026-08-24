@@ -1,9 +1,9 @@
 # IdrAgra input gatherer and QGIS prototype
 
-This repository is a deliberately small acquisition core for a future QGIS
-plugin. It does **not** export an IdrAgra project yet. Its job is to collect raw
-inputs, preserve their provenance, and define an editable intermediate weather
-table.
+This repository is a deliberately small acquisition and spatial-preparation
+core for a QGIS plugin. It does **not** export an IdrAgra project yet. Its job is
+to collect raw inputs, preserve their provenance, normalize them, and combine
+the spatial inputs into an editable simulation-cell view.
 
 The core has no QGIS dependency. The included QGIS prototype calls those same
 functions from a background `QgsTask`, while the command line remains useful
@@ -42,8 +42,12 @@ The workspace lets the user:
    Sentinel Hub Process API;
 12. normalize the DEM into aligned metric elevation-above-sea-level and percent-
    slope rasters;
-13. run acquisition and normalization independently or consecutively;
-14. load raw layers into collapsed, visible category groups such as `weather_raw`
+13. open a separate cell-builder dialog, edit/import annual crop rotations, and
+   allocate every normalized source class to one or more IdrAgra land uses;
+14. generate either regular grid cells with four aligned property rasters or
+   contiguous vector cells in a canonical GeoPackage;
+15. run acquisition and normalization independently or consecutively;
+16. load raw layers into collapsed, visible category groups such as `weather_raw`
    and `soil_raw`; numeric rasters use a first-band pseudocolor stretch so time
    bands are not mistaken for RGB channels. Geographic NetCDF grids are detected
    from their longitude/latitude axes and assigned WGS 84 automatically. If a
@@ -117,6 +121,10 @@ sampling/interpolation rules are known.
 - DEM normalization into `elevation_m_asl.tif` and `slope_pct.tif`, clipped to
   the AOI and reprojected to its local metric WGS 84 UTM CRS before calculating
   slope with the Horn algorithm;
+- a crop/rotation catalogue and percentage allocation editor, including import
+  of existing IdrAgra `soil_uses.txt` tables;
+- grid and vector simulation-cell generation into `simulation_cells.gpkg`;
+- aligned soil-ID, land-use-ID, elevation, and slope rasters in grid mode;
 - an installable QGIS dialog with rectangle drawing, planning, background
   acquisition, and result-layer loading.
 
@@ -178,7 +186,19 @@ study_inputs/
   topography/
     elevation_m_asl.tif
     slope_pct.tif
+  cells/
+    landuse_configuration.json
+    simulation_cells.gpkg
+    soil_id.tif              # grid mode only
+    landuse_id.tif           # grid mode only
+    elevation_m_asl.tif      # grid mode only
+    slope_pct.tif            # grid mode only
 ```
+
+Use **IdrAgra → Build IdrAgra simulation cells...** after the normalized soil,
+land-use, elevation, and slope inputs are ready. See
+[`docs/cell_view.md`](docs/cell_view.md) for the cell schema, aggregation rules,
+and current vector-allocation limitation.
 
 The GeoPackage contains one `weather_daily_points` layer. Each row represents
 one weather grid centre on one date and contains the date, location ID, point

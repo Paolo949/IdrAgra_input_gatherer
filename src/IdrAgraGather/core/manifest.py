@@ -87,6 +87,24 @@ class Manifest:
         data["assets"].sort(key=lambda item: item["path"])
         self._write(data)
 
+    def remove_assets(self, paths) -> None:
+        """Forget assets that were intentionally removed or superseded."""
+
+        relative_paths = set()
+        for path in paths:
+            resolved = Path(path).resolve()
+            try:
+                relative_paths.add(resolved.relative_to(self.root).as_posix())
+            except ValueError as exc:
+                raise ValueError(
+                    "manifest assets must be inside the staging directory"
+                ) from exc
+        data = self.read()
+        data["assets"] = [
+            item for item in data["assets"] if item["path"] not in relative_paths
+        ]
+        self._write(data)
+
     def _write(self, data: dict[str, Any]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         data["updated_at"] = _now()
@@ -97,4 +115,3 @@ class Manifest:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-

@@ -17,6 +17,9 @@ class QgisPackageTests(unittest.TestCase):
             self.assertEqual(roots, {"IdrAgraGather"})
             self.assertIn("IdrAgraGather/__init__.py", names)
             self.assertIn("IdrAgraGather/plugin.py", names)
+            self.assertIn("IdrAgraGather/cell_dialog.py", names)
+            self.assertIn("IdrAgraGather/core/cells.py", names)
+            self.assertIn("IdrAgraGather/core/landuses.py", names)
             self.assertIn("IdrAgraGather/core/providers/era5_land.py", names)
             self.assertIn("IdrAgraGather/core/providers/eobs.py", names)
             self.assertIn("IdrAgraGather/core/providers/soilgrids.py", names)
@@ -30,7 +33,7 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/core/soilgrids_normalize.py", names)
             self.assertIn("qgisMinimumVersion=3.28", metadata)
             self.assertIn("qgisMaximumVersion=4.99", metadata)
-            self.assertIn("version=0.11.0", metadata)
+            self.assertIn("version=0.12.1", metadata)
             self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))
 
     def test_qgis4_removed_enum_aliases_are_not_used(self):
@@ -56,6 +59,7 @@ class QgisPackageTests(unittest.TestCase):
         plugin_root = Path(__file__).resolve().parents[1] / "src" / "IdrAgraGather"
         dialog = (plugin_root / "dialog.py").read_text(encoding="utf-8")
         plugin = (plugin_root / "plugin.py").read_text(encoding="utf-8")
+        cell_dialog = (plugin_root / "cell_dialog.py").read_text(encoding="utf-8")
         for action in (
             "weather-acquire",
             "weather-transform",
@@ -120,6 +124,11 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("Copernicus DEM", dialog)
         self.assertIn('"normalize_topography"', dialog)
         self.assertIn("normalize_dem_files", plugin)
+        self.assertIn("Build IdrAgra simulation cells", plugin)
+        self.assertIn("build_simulation_cells", plugin)
+        self.assertIn("Crop rotations", cell_dialog)
+        self.assertIn("Class allocation", cell_dialog)
+        self.assertIn("Import soil_uses.txt", cell_dialog)
 
 
 if __name__ == "__main__":

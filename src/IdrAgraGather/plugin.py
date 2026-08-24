@@ -27,6 +27,8 @@ from qgis.core import (
     QgsTask,
     QgsVectorLayer,
 )
+from .cell_dialog import CellBuilderDialog
+from .core.cells import CELLS_NAME, build_simulation_cells
 from .core.corine_normalize import normalize_corine_file
 from .core.era5_normalize import normalize_era5_files
 from .core.eobs_normalize import common_date_coverage, normalize_eobs_files
@@ -107,6 +109,37 @@ def _run_acquisition(task, request):
         "load_results": request["load_results"],
         "outputs": [str(path) for path in outputs],
         "load_paths": [str(path) for path in load_paths],
+    }
+
+
+def _run_cell_builder(task, request):
+    """Run version-neutral cell generation in a QGIS background task."""
+
+    status_callback = request.get("status_callback")
+
+    def update_status(message):
+        if status_callback is not None:
+            status_callback(str(message))
+
+    task.setProgress(5)
+    result = build_simulation_cells(
+        request["output"],
+        mode=request["mode"],
+        cell_width_m=request["cell_width_m"],
+        elevation_method=request["elevation_method"],
+        slope_method=request["slope_method"],
+        crops=request["crops"],
+        landuses=request["landuses"],
+        allocations=request["allocations"],
+        on_status=update_status,
+    )
+    task.setProgress(100)
+    return {
+        "cancelled": bool(task.isCanceled()),
+        "outputs": [str(path) for path in result.paths],
+        "load_paths": [str(result.cells_path), *(str(path) for path in result.raster_paths)],
+        "cell_count": result.cell_count,
+        "warnings": list(result.warnings),
     }
 
 
@@ -385,7 +418,9 @@ class IdrAgraGatherPlugin:
         self.iface = iface
         self.canvas = iface.mapCanvas()
         self.action = None
+        self.cell_action = None
         self.dialog = None
+        self.cell_dialog = None
         self.map_tool = RectangleMapTool(self.canvas)
         self.map_tool.rectangleCreated.connect(self._rectangle_created)
         self.map_tool.cancelled.connect(self._drawing_cancelled)
@@ -400,17 +435,31 @@ class IdrAgraGatherPlugin:
         self.iface.addToolBarIcon(action)
         self.action = action
 
+        cell_action = QAction("Build IdrAgra simulation cells...", self.iface.mainWindow())
+        cell_action.setToolTip("Combine normalized inputs into an IdrAgra cell view")
+        cell_action.triggered.connect(self.show_cell_dialog)
+        self.iface.addPluginToMenu(MENU_NAME, cell_action)
+        self.iface.addToolBarIcon(cell_action)
+        self.cell_action = cell_action
+
     def unload(self):
         action = self.action
         if action is not None:
             self.iface.removePluginMenu(MENU_NAME, action)
             self.iface.removeToolBarIcon(action)
+        cell_action = self.cell_action
+        if cell_action is not None:
+            self.iface.removePluginMenu(MENU_NAME, cell_action)
+            self.iface.removeToolBarIcon(cell_action)
         if self.canvas.mapTool() is self.map_tool:
             self.iface.actionPan().trigger()
         self.map_tool.clear()
         dialog = self.dialog
         if dialog is not None:
             dialog.close()
+        cell_dialog = self.cell_dialog
+        if cell_dialog is not None:
+            cell_dialog.close()
 
     def show_dialog(self):
         dialog = self.dialog
@@ -429,6 +478,108 @@ class IdrAgraGatherPlugin:
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def show_cell_dialog(self):
+        dialog = self.cell_dialog
+        if dialog is None:
+            dialog = CellBuilderDialog(self.iface.mainWindow())
+            dialog.runRequested.connect(self._run_cells)
+            settings = QSettings()
+            default_output = _qgis_project().homePath() or QDir.homePath()
+            dialog.set_workspace(
+                settings.value("IdrAgraGather/output", default_output, type=str)
+            )
+            self.cell_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _run_cells(self, request):
+        if self.task is not None:
+            self._show_error("Another IdrAgra task is already running.")
+            return
+        dialog = self.cell_dialog
+        if dialog is None:
+            return
+        output_dir = Path(request["output"]) / "cells"
+        existing = [
+            path
+            for path in (
+                output_dir / CELLS_NAME,
+                output_dir / "soil_id.tif",
+                output_dir / "landuse_id.tif",
+                output_dir / "elevation_m_asl.tif",
+                output_dir / "slope_pct.tif",
+            )
+            if path.exists()
+        ]
+        if existing:
+            answer = QMessageBox.question(
+                self.iface.mainWindow(),
+                "Replace existing cell view?",
+                "A cell view already exists in this workspace. Replace its spatial "
+                "outputs with the new configuration?",
+                MESSAGE_BUTTON.Yes | MESSAGE_BUTTON.No,
+                MESSAGE_BUTTON.No,
+            )
+            if answer != MESSAGE_BUTTON.Yes:
+                dialog.append_log("Cell generation cancelled; existing outputs kept.")
+                return
+            for path in existing:
+                self._remove_project_layers_for_path(path)
+            QCoreApplication.processEvents()
+
+        QSettings().setValue("IdrAgraGather/output", request["output"])
+        dialog.set_running(True)
+        dialog.append_log(f"Cell generation started in {request['mode']} mode.")
+        reporter = AcquisitionReporter(self.iface.mainWindow())
+        reporter.status.connect(dialog.append_log)
+        request["status_callback"] = reporter.status.emit
+        self.reporter = reporter
+        worker_task = QgsTask.fromFunction(
+            "IdrAgra: build simulation cells",
+            _run_cell_builder,
+            on_finished=self._cell_task_finished,
+            request=request,
+        )
+        self.task = worker_task
+        _qgis_task_manager().addTask(worker_task)
+
+    def _cell_task_finished(self, exception, result=None):
+        self.task = None
+        reporter = self.reporter
+        if reporter is not None:
+            reporter.deleteLater()
+            self.reporter = None
+        dialog = self.cell_dialog
+        if dialog is not None:
+            dialog.set_running(False)
+        if exception is not None:
+            message = str(exception)
+            if dialog is not None:
+                dialog.append_log("ERROR: " + message)
+            self._show_error(message)
+            return
+        if not result or result.get("cancelled"):
+            if dialog is not None:
+                dialog.append_log("Cell generation cancelled.")
+            return
+        loaded = sum(
+            self._load_spatial_file(Path(path))
+            for path in result.get("load_paths", [])
+        )
+        if dialog is not None:
+            dialog.append_log(
+                f"Completed: {result['cell_count']} cell(s); loaded {loaded} layer(s)."
+            )
+            for warning in result.get("warnings", []):
+                dialog.append_log("WARNING: " + warning)
+        self.iface.messageBar().pushMessage(
+            "IdrAgra Input Gatherer",
+            f"Simulation cell view ready: {result['cell_count']} cell(s).",
+            level=MESSAGE_LEVEL.Success,
+            duration=6,
+        )
 
     def _start_drawing(self):
         dialog = self.dialog
@@ -662,6 +813,7 @@ class IdrAgraGatherPlugin:
                 layer.setName(f"{path.stem} — {detail.name()}")
                 self._style_normalized_soil_layer(layer, path)
                 self._style_normalized_landuse_layer(layer, path)
+                self._style_simulation_cells_layer(layer, path)
                 self._add_layer(layer, path)
                 loaded += 1
         # Some older provider builds do not advertise a Shapefile as a
@@ -708,6 +860,21 @@ class IdrAgraGatherPlugin:
         if not categories:
             return
         layer.setRenderer(QgsCategorizedSymbolRenderer("landuse", categories))
+        layer.triggerRepaint()
+
+    @staticmethod
+    def _style_simulation_cells_layer(layer, path):
+        """Categorize canonical cells by their allocated IdrAgra land-use ID."""
+        if Path(path).name.lower() != CELLS_NAME:
+            return
+        field_index = layer.fields().indexFromName("landuse_id")
+        if field_index < 0:
+            return
+        values = sorted(layer.uniqueValues(field_index), key=lambda value: int(value))
+        categories = IdrAgraGatherPlugin._categories_for_values(layer, values)
+        if not categories:
+            return
+        layer.setRenderer(QgsCategorizedSymbolRenderer("landuse_id", categories))
         layer.triggerRepaint()
 
     @staticmethod
@@ -999,7 +1166,7 @@ class IdrAgraGatherPlugin:
             if index + 1 < len(parts):
                 return f"{parts[index + 1]}_raw", True
         parent = Path(path).parent.name.lower()
-        if parent in {"weather", "soil", "landuse", "topography"}:
+        if parent in {"weather", "soil", "landuse", "topography", "cells"}:
             return parent, False
         return None, False
 

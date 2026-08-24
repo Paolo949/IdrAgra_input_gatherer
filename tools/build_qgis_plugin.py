@@ -7,7 +7,14 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_SOURCE = ROOT / "src" / "IdrAgraGather"
-REQUIRED = ("__init__.py", "metadata.txt", "plugin.py", "dialog.py", "map_tool.py")
+REQUIRED = (
+    "__init__.py",
+    "metadata.txt",
+    "plugin.py",
+    "dialog.py",
+    "cell_dialog.py",
+    "map_tool.py",
+)
 PACKAGE_NAME = "IdrAgraGather"
 
 
