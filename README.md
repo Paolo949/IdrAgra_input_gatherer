@@ -1,9 +1,9 @@
 # IdrAgra input gatherer and QGIS prototype
 
 This repository is a deliberately small acquisition and spatial-preparation
-core for a QGIS plugin. It does **not** export an IdrAgra project yet. Its job is
-to collect raw inputs, preserve their provenance, normalize them, and combine
-the spatial inputs into an editable simulation-cell view.
+core for a QGIS plugin. It collects raw inputs, preserves their provenance,
+normalizes them, combines the spatial inputs into an editable simulation-cell
+view, and exports the supported static rain-fed IdrAgra v2 input contract.
 
 The core has no QGIS dependency. The included QGIS prototype calls those same
 functions from a background `QgsTask`, while the command line remains useful
@@ -48,8 +48,10 @@ The workspace lets the user:
    allocate every normalized source class to one or more IdrAgra land uses;
 15. generate either regular grid cells with four aligned property rasters or
    contiguous vector cells in a canonical GeoPackage;
-16. run acquisition and normalization independently or consecutively;
-17. load raw layers into collapsed, visible category groups such as `weather_raw`
+16. export regular-grid cells to IdrAgra v2 spatial grids, station series,
+   weather-weight grids, CropCoef rotation inputs, and a parameter template;
+17. run acquisition and normalization independently or consecutively;
+18. load raw layers into collapsed, visible category groups such as `weather_raw`
    and `soil_raw`; numeric rasters use a first-band pseudocolor stretch so time
    bands are not mistaken for RGB channels. Geographic NetCDF grids are detected
    from their longitude/latitude axes and assigned WGS 84 automatically. If a
@@ -116,6 +118,11 @@ sampling/interpolation rules are known.
   attribute profile attached to each polygon and no PTF-derived values;
 - Rosetta 3 H2/H3 derivation into replaceable `soil_hydraulics.gpkg` metadata
   and profile/horizon tables, including canonical v2/v3 fields and provenance;
+- an IdrAgra v2 exporter for static land use, Mode 0 (rain-fed), internally
+  initialized soil moisture, and disabled capillary rise. It aggregates the six
+  normalized horizons to v2's two layers, converts Ksat from canonical mm/h to
+  v2 cm/h, derives v2's Brooks-Corey `N`, writes weather station/IDW inputs, and
+  records every transformation in `export_provenance.json`;
 - AOI-filtered CORINE Land Cover 2018 vector acquisition from the EEA ArcGIS
   REST service, retaining the published `Code_18` classification;
 - CORINE normalization into an AOI-clipped minimal `landuse.shp`, categorized
@@ -200,6 +207,13 @@ study_inputs/
     landuse_id.tif           # grid mode only
     elevation_m_asl.tif      # grid mode only
     slope_pct.tif            # grid mode only
+  exports/idragra_v2/        # default fourth-dialog destination
+    idragra_parameters.txt
+    weather_stations.dat
+    geodata/*.asc
+    meteodata/station_*.dat
+    landuses/soil_uses.txt
+    export_provenance.json
 ```
 
 Use **IdrAgra → Build IdrAgra simulation cells...** after the normalized soil,
@@ -212,6 +226,11 @@ The default Rosetta H3 run uses texture and bulk density; H2 can be selected to
 use texture alone. Required inputs, generated outputs, and unused normalized
 fields are highlighted separately. See [`docs/soil_ptf.md`](docs/soil_ptf.md)
 for equations, units, validation, uncertainty, and the output schema.
+
+Use **IdrAgra -> Export IdrAgra v2 inputs...** after building a regular-grid
+cell view and running a soil PTF. See [`docs/v2_export.md`](docs/v2_export.md)
+for the supported static rain-fed contract, equations, unit conversions, and
+the explicit CropCoef phenology hand-off.
 
 The GeoPackage contains one `weather_daily_points` layer. Each row represents
 one weather grid centre on one date and contains the date, location ID, point

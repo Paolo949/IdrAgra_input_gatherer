@@ -53,6 +53,8 @@ from .dialog import (
 )
 from .map_tool import RectangleMapTool
 from .soil_ptf_dialog import SoilPtfDialog
+from .v2_export_dialog import V2ExportDialog
+from .core.v2_export import export_v2_workspace
 
 
 MENU_NAME = "&IdrAgra"
@@ -171,6 +173,35 @@ def _run_soil_ptf(task, request):
         "profile_count": result.profile_count,
         "horizon_count": result.horizon_count,
         "model_code": result.model_code,
+        "warnings": list(result.warnings),
+    }
+
+
+def _run_v2_export(task, request):
+    """Run the IdrAgra v2 exporter in a QGIS background task."""
+
+    status_callback = request.get("status_callback")
+    task.setProgress(5)
+    result = export_v2_workspace(
+        request["workspace"],
+        request["destination"],
+        evap_layer_m=request["evap_layer_m"],
+        root_layer_m=request["root_layer_m"],
+        weather_neighbors=request["weather_neighbors"],
+        hydrologic_condition=request["hydrologic_condition"],
+        crop_parameter_folder=request.get("crop_parameter_folder"),
+        overwrite=bool(request.get("overwrite")),
+        on_status=status_callback,
+    )
+    task.setProgress(100)
+    return {
+        "cancelled": bool(task.isCanceled()),
+        "output_path": str(result.output_path),
+        "file_count": result.file_count,
+        "station_count": result.station_count,
+        "active_landuses": list(result.active_landuses),
+        "start": result.start.isoformat(),
+        "end": result.end.isoformat(),
         "warnings": list(result.warnings),
     }
 
@@ -450,9 +481,11 @@ class IdrAgraGatherPlugin:
         self.action = None
         self.cell_action = None
         self.ptf_action = None
+        self.v2_export_action = None
         self.dialog = None
         self.cell_dialog = None
         self.ptf_dialog = None
+        self.v2_export_dialog = None
         self.map_tool = RectangleMapTool(self.canvas)
         self.map_tool.rectangleCreated.connect(self._rectangle_created)
         self.map_tool.cancelled.connect(self._drawing_cancelled)
@@ -485,6 +518,13 @@ class IdrAgraGatherPlugin:
         self.iface.addToolBarIcon(ptf_action)
         self.ptf_action = ptf_action
 
+        export_action = QAction("Export IdrAgra v2 inputs...", self.iface.mainWindow())
+        export_action.setToolTip("Convert the regular-grid workspace to IdrAgra v2 files")
+        export_action.triggered.connect(self.show_v2_export_dialog)
+        self.iface.addPluginToMenu(MENU_NAME, export_action)
+        self.iface.addToolBarIcon(export_action)
+        self.v2_export_action = export_action
+
     def unload(self):
         action = self.action
         if action is not None:
@@ -498,6 +538,10 @@ class IdrAgraGatherPlugin:
         if ptf_action is not None:
             self.iface.removePluginMenu(MENU_NAME, ptf_action)
             self.iface.removeToolBarIcon(ptf_action)
+        export_action = self.v2_export_action
+        if export_action is not None:
+            self.iface.removePluginMenu(MENU_NAME, export_action)
+            self.iface.removeToolBarIcon(export_action)
         if self.canvas.mapTool() is self.map_tool:
             self.iface.actionPan().trigger()
         self.map_tool.clear()
@@ -510,6 +554,9 @@ class IdrAgraGatherPlugin:
         ptf_dialog = self.ptf_dialog
         if ptf_dialog is not None:
             ptf_dialog.close()
+        export_dialog = self.v2_export_dialog
+        if export_dialog is not None:
+            export_dialog.close()
 
     def show_dialog(self):
         dialog = self.dialog
@@ -558,6 +605,91 @@ class IdrAgraGatherPlugin:
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def show_v2_export_dialog(self):
+        dialog = self.v2_export_dialog
+        if dialog is None:
+            dialog = V2ExportDialog(self.iface.mainWindow())
+            dialog.runRequested.connect(self._run_v2_export)
+            settings = QSettings()
+            default_output = _qgis_project().homePath() or QDir.homePath()
+            dialog.set_workspace(
+                settings.value("IdrAgraGather/output", default_output, type=str)
+            )
+            self.v2_export_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _run_v2_export(self, request):
+        if self.task is not None:
+            self._show_error("Another IdrAgra task is already running.")
+            return
+        dialog = self.v2_export_dialog
+        if dialog is None:
+            return
+        destination = Path(request["destination"])
+        if destination.exists() and destination.is_dir() and any(destination.iterdir()):
+            answer = QMessageBox.question(
+                self.iface.mainWindow(),
+                "Replace existing v2 export?",
+                f"The export folder is not empty:\n{destination}\n\nReplace its contents?",
+                MESSAGE_BUTTON.Yes | MESSAGE_BUTTON.No,
+                MESSAGE_BUTTON.No,
+            )
+            if answer != MESSAGE_BUTTON.Yes:
+                dialog.append_log("Export cancelled; existing files kept.")
+                return
+            request["overwrite"] = True
+        QSettings().setValue("IdrAgraGather/output", request["workspace"])
+        dialog.set_running(True)
+        dialog.append_log("IdrAgra v2 export started.")
+        reporter = AcquisitionReporter(self.iface.mainWindow())
+        reporter.status.connect(dialog.append_log)
+        request["status_callback"] = reporter.status.emit
+        self.reporter = reporter
+        worker_task = QgsTask.fromFunction(
+            "IdrAgra: export v2 inputs",
+            _run_v2_export,
+            on_finished=self._v2_export_finished,
+            request=request,
+        )
+        self.task = worker_task
+        _qgis_task_manager().addTask(worker_task)
+
+    def _v2_export_finished(self, exception, result=None):
+        self.task = None
+        reporter = self.reporter
+        if reporter is not None:
+            reporter.deleteLater()
+            self.reporter = None
+        dialog = self.v2_export_dialog
+        if dialog is not None:
+            dialog.set_running(False)
+        if exception is not None:
+            message = str(exception)
+            if dialog is not None:
+                dialog.append_log("ERROR: " + message)
+            self._show_error(message)
+            return
+        if not result or result.get("cancelled"):
+            if dialog is not None:
+                dialog.append_log("v2 export cancelled.")
+            return
+        if dialog is not None:
+            dialog.append_log(
+                f"Completed: {result['file_count']} file(s), "
+                f"{result['station_count']} weather station(s), "
+                f"{result['start']} to {result['end']}."
+            )
+            for warning in result.get("warnings", []):
+                dialog.append_log("NOTE: " + warning)
+        self.iface.messageBar().pushMessage(
+            "IdrAgra Input Gatherer",
+            f"IdrAgra v2 package written to {result['output_path']}",
+            level=MESSAGE_LEVEL.Success,
+            duration=8,
+        )
 
     def _run_ptf(self, request):
         if self.task is not None:

@@ -66,9 +66,14 @@ Each increment should stay usable without the later ones.
    - next: refine percentage-driven subdivision of large vector regions and
      add map-preview/summary controls.
 
-7. **v2/v3 exporter**
-   - pivot validated daily weather into seven IdrAgra files;
-   - verify cell ordering against `cell_info`;
-   - emit v2 regular grids and weather-station weight maps from grid cells;
-   - write two header rows and ISO dates exactly as the v3 reader expects;
-   - add an integration fixture accepted by the v3 executable/parser.
+7. **v2/v3 exporter — first static v2 contract implemented**
+   - v2 regular grids, two-layer soil aggregation, weather station series and
+     inverse-distance weight maps are generated from grid cells;
+   - canonical Ksat is converted to v2 cm/h and v2 Brooks-Corey `N` is derived
+     with the legacy IdrAgraTools equation;
+   - static rain-fed/no-capillary-rise parameters and provenance are written;
+   - CropCoef rotations are exported, while its phenology run remains an
+     explicit prerequisite;
+   - next: operational irrigation, annual land-use variation, water-table and
+     capillary-rise inputs, then v3 cell-ordered weather and parameter files;
+   - add integration fixtures accepted by the v2 and v3 executables/parsers.

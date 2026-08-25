@@ -14,6 +14,7 @@ REQUIRED = (
     "dialog.py",
     "cell_dialog.py",
     "soil_ptf_dialog.py",
+    "v2_export_dialog.py",
     "map_tool.py",
 )
 PACKAGE_NAME = "IdrAgraGather"

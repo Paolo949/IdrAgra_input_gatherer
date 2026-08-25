@@ -19,8 +19,10 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/plugin.py", names)
             self.assertIn("IdrAgraGather/cell_dialog.py", names)
             self.assertIn("IdrAgraGather/soil_ptf_dialog.py", names)
+            self.assertIn("IdrAgraGather/v2_export_dialog.py", names)
             self.assertIn("IdrAgraGather/core/cells.py", names)
             self.assertIn("IdrAgraGather/core/soil_ptf.py", names)
+            self.assertIn("IdrAgraGather/core/v2_export.py", names)
             self.assertIn(
                 "IdrAgraGather/core/_rosetta_data/rose3_mod2_0.npz", names
             )
@@ -44,7 +46,7 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/core/soilgrids_normalize.py", names)
             self.assertIn("qgisMinimumVersion=3.28", metadata)
             self.assertIn("qgisMaximumVersion=4.99", metadata)
-            self.assertIn("version=0.14.0", metadata)
+            self.assertIn("version=0.15.0", metadata)
             self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))
 
     def test_qgis4_removed_enum_aliases_are_not_used(self):
@@ -72,6 +74,7 @@ class QgisPackageTests(unittest.TestCase):
         plugin = (plugin_root / "plugin.py").read_text(encoding="utf-8")
         cell_dialog = (plugin_root / "cell_dialog.py").read_text(encoding="utf-8")
         ptf_dialog = (plugin_root / "soil_ptf_dialog.py").read_text(encoding="utf-8")
+        export_dialog = (plugin_root / "v2_export_dialog.py").read_text(encoding="utf-8")
         for action in (
             "weather-acquire",
             "weather-transform",
@@ -149,6 +152,9 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("Required inputs", ptf_dialog)
         self.assertIn("Generated outputs", ptf_dialog)
         self.assertIn("Available but unused", ptf_dialog)
+        self.assertIn("Export IdrAgra v2 inputs", plugin)
+        self.assertIn("static, rain-fed", export_dialog)
+        self.assertIn("Not generated: phenology series", export_dialog)
 
 
 if __name__ == "__main__":
