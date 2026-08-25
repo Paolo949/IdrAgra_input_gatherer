@@ -42,11 +42,15 @@ Each increment should stay usable without the later ones.
      units, condenses similar profiles to a user-selected maximum class count,
      fills all NoData gaps to cover the AOI, and does not apply a pedotransfer
      function;
+   - a separate Rosetta 3 PTF dialog derives a complete canonical hydraulic set
+     per profile/horizon and records method inputs, outputs, unused fields,
+     units, uncertainty, and provenance;
    - CORINE and SoilGrids normalized polygons are clipped to the exact AOI;
    - CORINE normalization writes a minimal Shapefile with readable level-three
      land-use categories and automatic categorical QGIS styling;
-   - next: make PTF application an explicit transformation from normalized soil
-     profiles to hydraulic or IdrAgra-ready columns.
+   - next: add Saxton–Rawls and legacy v2 Rawls–Brakensiek adapters behind the
+     same field-contract and output schema, including selectable documented bulk-
+     density/coarse-fragment corrections where the method supports them.
 
 6. **Simulation-cell view — first implementation complete**
    - a separate QGIS dialog maintains reusable crop parameter references and

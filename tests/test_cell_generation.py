@@ -1,3 +1,4 @@
+import json
 import math
 import tempfile
 import unittest
@@ -91,9 +92,41 @@ class CellGenerationTests(unittest.TestCase):
             layer = cells.GetLayerByName("simulation_cells")
             self.assertEqual(layer.GetFeatureCount(), grid.cell_count)
             self.assertGreaterEqual(layer.GetLayerDefn().GetFieldIndex("latitude"), 0)
-            slopes = [feature.GetField("slope_pct") for feature in layer]
+            slopes = []
+            for feature in layer:
+                slopes.append(feature.GetField("slope_pct"))
+                self.assertAlmostEqual(feature.GetGeometryRef().GetArea(), 500.0 ** 2)
+                self.assertEqual(feature.GetField("aoi_fraction"), 1.0)
             self.assertIn(2.0, slopes)
             cells = None
+
+            crossing_grid = build_simulation_cells(
+                root,
+                mode="grid",
+                crops=[],
+                landuses=landuses,
+                allocations=allocations,
+                cell_width_m=500.0,
+                grid_boundary_policy="intersect",
+                bbox=bbox,
+            )
+            self.assertGreater(crossing_grid.cell_count, grid.cell_count)
+            crossing_cells = ogr.Open(str(crossing_grid.cells_path), 0)
+            crossing_layer = crossing_cells.GetLayerByName("simulation_cells")
+            fractions = []
+            for feature in crossing_layer:
+                fractions.append(feature.GetField("aoi_fraction"))
+                self.assertAlmostEqual(feature.GetGeometryRef().GetArea(), 500.0 ** 2)
+            self.assertTrue(any(fraction < 1.0 for fraction in fractions))
+            crossing_cells = None
+            manifest = json.loads((root / "manifest.json").read_text())
+            cell_asset = next(
+                item for item in manifest["assets"]
+                if item["path"] == "cells/simulation_cells.gpkg"
+            )
+            self.assertEqual(
+                cell_asset["request"]["grid_boundary_policy"], "intersect"
+            )
 
             fine_grid = build_simulation_cells(
                 root,

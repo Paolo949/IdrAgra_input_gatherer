@@ -41,6 +41,8 @@ from .core.providers.eobs import fetch as fetch_eobs
 from .core.providers.soilgrids import ensure_raster_crs as ensure_soilgrids_raster_crs
 from .core.providers.soilgrids import fetch as fetch_soilgrids
 from .core.soilgrids_normalize import normalize_soilgrids_files
+from .core.soil_ptf import OUTPUT_NAME as SOIL_PTF_OUTPUT_NAME
+from .core.soil_ptf import apply_rosetta3_to_workspace
 from .core.staging import StagingArea, find_staged_files
 from .core.topography_normalize import normalize_dem_files
 from .dialog import (
@@ -50,6 +52,7 @@ from .dialog import (
     TOPOGRAPHY_SOURCE_COPERNICUS,
 )
 from .map_tool import RectangleMapTool
+from .soil_ptf_dialog import SoilPtfDialog
 
 
 MENU_NAME = "&IdrAgra"
@@ -126,6 +129,7 @@ def _run_cell_builder(task, request):
         request["output"],
         mode=request["mode"],
         cell_width_m=request["cell_width_m"],
+        grid_boundary_policy=request.get("grid_boundary_policy", "inside"),
         elevation_method=request["elevation_method"],
         slope_method=request["slope_method"],
         crops=request["crops"],
@@ -139,6 +143,34 @@ def _run_cell_builder(task, request):
         "outputs": [str(path) for path in result.paths],
         "load_paths": [str(result.cells_path), *(str(path) for path in result.raster_paths)],
         "cell_count": result.cell_count,
+        "warnings": list(result.warnings),
+    }
+
+
+def _run_soil_ptf(task, request):
+    """Run a soil PTF in a QGIS background task."""
+
+    status_callback = request.get("status_callback")
+
+    def update_status(message):
+        if status_callback is not None:
+            status_callback(str(message))
+
+    if request.get("method") != "rosetta3":
+        raise ValueError(f"Unsupported soil PTF: {request.get('method')}")
+    task.setProgress(5)
+    result = apply_rosetta3_to_workspace(
+        request["output"],
+        use_bulk_density=bool(request.get("use_bulk_density", True)),
+        on_status=update_status,
+    )
+    task.setProgress(100)
+    return {
+        "cancelled": bool(task.isCanceled()),
+        "path": str(result.path),
+        "profile_count": result.profile_count,
+        "horizon_count": result.horizon_count,
+        "model_code": result.model_code,
         "warnings": list(result.warnings),
     }
 
@@ -419,8 +451,10 @@ class IdrAgraGatherPlugin:
         self.canvas = iface.mapCanvas()
         self.action = None
         self.cell_action = None
+        self.ptf_action = None
         self.dialog = None
         self.cell_dialog = None
+        self.ptf_dialog = None
         self.map_tool = RectangleMapTool(self.canvas)
         self.map_tool.rectangleCreated.connect(self._rectangle_created)
         self.map_tool.cancelled.connect(self._drawing_cancelled)
@@ -442,6 +476,17 @@ class IdrAgraGatherPlugin:
         self.iface.addToolBarIcon(cell_action)
         self.cell_action = cell_action
 
+        ptf_action = QAction(
+            "Derive soil hydraulic properties...", self.iface.mainWindow()
+        )
+        ptf_action.setToolTip(
+            "Apply a pedotransfer function to normalized soil profiles"
+        )
+        ptf_action.triggered.connect(self.show_soil_ptf_dialog)
+        self.iface.addPluginToMenu(MENU_NAME, ptf_action)
+        self.iface.addToolBarIcon(ptf_action)
+        self.ptf_action = ptf_action
+
     def unload(self):
         action = self.action
         if action is not None:
@@ -451,6 +496,10 @@ class IdrAgraGatherPlugin:
         if cell_action is not None:
             self.iface.removePluginMenu(MENU_NAME, cell_action)
             self.iface.removeToolBarIcon(cell_action)
+        ptf_action = self.ptf_action
+        if ptf_action is not None:
+            self.iface.removePluginMenu(MENU_NAME, ptf_action)
+            self.iface.removeToolBarIcon(ptf_action)
         if self.canvas.mapTool() is self.map_tool:
             self.iface.actionPan().trigger()
         self.map_tool.clear()
@@ -460,6 +509,9 @@ class IdrAgraGatherPlugin:
         cell_dialog = self.cell_dialog
         if cell_dialog is not None:
             cell_dialog.close()
+        ptf_dialog = self.ptf_dialog
+        if ptf_dialog is not None:
+            ptf_dialog.close()
 
     def show_dialog(self):
         dialog = self.dialog
@@ -493,6 +545,89 @@ class IdrAgraGatherPlugin:
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+
+    def show_soil_ptf_dialog(self):
+        dialog = self.ptf_dialog
+        if dialog is None:
+            dialog = SoilPtfDialog(self.iface.mainWindow())
+            dialog.runRequested.connect(self._run_ptf)
+            settings = QSettings()
+            default_output = _qgis_project().homePath() or QDir.homePath()
+            dialog.set_workspace(
+                settings.value("IdrAgraGather/output", default_output, type=str)
+            )
+            self.ptf_dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _run_ptf(self, request):
+        if self.task is not None:
+            self._show_error("Another IdrAgra task is already running.")
+            return
+        dialog = self.ptf_dialog
+        if dialog is None:
+            return
+        output = Path(request["output"]) / "soil" / SOIL_PTF_OUTPUT_NAME
+        if output.exists():
+            removed = self._remove_project_layers_for_path(output)
+            if removed:
+                dialog.append_log(
+                    f"Removed {removed} loaded hydraulic table(s) before replacement."
+                )
+                QCoreApplication.processEvents()
+
+        QSettings().setValue("IdrAgraGather/output", request["output"])
+        dialog.set_running(True)
+        hierarchy = "H3" if request.get("use_bulk_density", True) else "H2"
+        dialog.append_log(f"Rosetta 3 {hierarchy} run started.")
+        reporter = AcquisitionReporter(self.iface.mainWindow())
+        reporter.status.connect(dialog.append_log)
+        request["status_callback"] = reporter.status.emit
+        self.reporter = reporter
+        worker_task = QgsTask.fromFunction(
+            f"IdrAgra: Rosetta 3 {hierarchy}",
+            _run_soil_ptf,
+            on_finished=self._ptf_task_finished,
+            request=request,
+        )
+        self.task = worker_task
+        _qgis_task_manager().addTask(worker_task)
+
+    def _ptf_task_finished(self, exception, result=None):
+        self.task = None
+        reporter = self.reporter
+        if reporter is not None:
+            reporter.deleteLater()
+            self.reporter = None
+        dialog = self.ptf_dialog
+        if dialog is not None:
+            dialog.set_running(False)
+            dialog.refresh_status()
+        if exception is not None:
+            message = str(exception)
+            if dialog is not None:
+                dialog.append_log("ERROR: " + message)
+            self._show_error(message)
+            return
+        if not result or result.get("cancelled"):
+            if dialog is not None:
+                dialog.append_log("Soil PTF run cancelled.")
+            return
+        loaded = self._load_spatial_file(Path(result["path"]))
+        if dialog is not None:
+            dialog.append_log(
+                f"Completed: {result['profile_count']} profile(s), "
+                f"{result['horizon_count']} horizon(s); loaded {loaded} table(s)."
+            )
+            for warning in result.get("warnings", []):
+                dialog.append_log("NOTE: " + warning)
+        self.iface.messageBar().pushMessage(
+            "IdrAgra Input Gatherer",
+            "Rosetta soil hydraulic properties are ready.",
+            level=MESSAGE_LEVEL.Success,
+            duration=6,
+        )
 
     def _run_cells(self, request):
         if self.task is not None:

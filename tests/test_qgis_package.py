@@ -18,7 +18,18 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/__init__.py", names)
             self.assertIn("IdrAgraGather/plugin.py", names)
             self.assertIn("IdrAgraGather/cell_dialog.py", names)
+            self.assertIn("IdrAgraGather/soil_ptf_dialog.py", names)
             self.assertIn("IdrAgraGather/core/cells.py", names)
+            self.assertIn("IdrAgraGather/core/soil_ptf.py", names)
+            self.assertIn(
+                "IdrAgraGather/core/_rosetta_data/rose3_mod2_0.npz", names
+            )
+            self.assertIn(
+                "IdrAgraGather/core/_rosetta_data/rose3_mod3_0.npz", names
+            )
+            self.assertIn(
+                "IdrAgraGather/core/_rosetta_data/ROSETTA_LICENSE.txt", names
+            )
             self.assertIn("IdrAgraGather/core/landuses.py", names)
             self.assertIn("IdrAgraGather/core/providers/era5_land.py", names)
             self.assertIn("IdrAgraGather/core/providers/eobs.py", names)
@@ -33,7 +44,7 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/core/soilgrids_normalize.py", names)
             self.assertIn("qgisMinimumVersion=3.28", metadata)
             self.assertIn("qgisMaximumVersion=4.99", metadata)
-            self.assertIn("version=0.12.1", metadata)
+            self.assertIn("version=0.14.0", metadata)
             self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))
 
     def test_qgis4_removed_enum_aliases_are_not_used(self):
@@ -60,6 +71,7 @@ class QgisPackageTests(unittest.TestCase):
         dialog = (plugin_root / "dialog.py").read_text(encoding="utf-8")
         plugin = (plugin_root / "plugin.py").read_text(encoding="utf-8")
         cell_dialog = (plugin_root / "cell_dialog.py").read_text(encoding="utf-8")
+        ptf_dialog = (plugin_root / "soil_ptf_dialog.py").read_text(encoding="utf-8")
         for action in (
             "weather-acquire",
             "weather-transform",
@@ -129,6 +141,14 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("Crop rotations", cell_dialog)
         self.assertIn("Class allocation", cell_dialog)
         self.assertIn("Import soil_uses.txt", cell_dialog)
+        self.assertIn("Only squares fully inside the AOI", cell_dialog)
+        self.assertIn("All full squares intersecting the AOI", cell_dialog)
+        self.assertIn('"grid_boundary_policy"', cell_dialog)
+        self.assertIn("Derive soil hydraulic properties", plugin)
+        self.assertIn("Rosetta 3", ptf_dialog)
+        self.assertIn("Required inputs", ptf_dialog)
+        self.assertIn("Generated outputs", ptf_dialog)
+        self.assertIn("Available but unused", ptf_dialog)
 
 
 if __name__ == "__main__":

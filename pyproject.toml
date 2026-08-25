@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "idragather"
-version = "0.12.1"
+version = "0.14.0"
 description = "Small, QGIS-independent input acquisition core for IdrAgra"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,4 +21,9 @@ where = ["src"]
 include = ["IdrAgraGather", "IdrAgraGather.core*"]
 
 [tool.setuptools.package-data]
-IdrAgraGather = ["metadata.txt"]
+IdrAgraGather = [
+    "metadata.txt",
+    "core/_rosetta_data/*.npz",
+    "core/_rosetta_data/*.txt",
+    "core/_rosetta_data/*.md",
+]

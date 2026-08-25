@@ -146,6 +146,7 @@ def build_simulation_cells(
     landuses: Sequence[LandUseDefinition],
     allocations: Sequence[LandUseAllocation],
     cell_width_m: float = 250.0,
+    grid_boundary_policy: str = "inside",
     elevation_method: str = "median",
     slope_method: str = "dominant",
     bbox: BoundingBox | None = None,
@@ -162,6 +163,11 @@ def build_simulation_cells(
         raise ValueError("Cell mode must be 'grid' or 'vector'.")
     if cell_width_m <= 0:
         raise ValueError("Grid cell width must be positive.")
+    grid_boundary_policy = str(grid_boundary_policy).strip().casefold()
+    if grid_boundary_policy not in {"inside", "intersect"}:
+        raise ValueError(
+            "Grid boundary policy must be 'inside' or 'intersect'."
+        )
     if elevation_method not in {"mean", "median", "dominant", "centroid"}:
         raise ValueError(f"Unsupported elevation aggregation: {elevation_method}")
     if slope_method not in {"mean", "median", "dominant", "centroid"}:
@@ -213,7 +219,14 @@ def build_simulation_cells(
 
     if mode == "grid":
         if on_status:
-            on_status(f"Building a {cell_width_m:g} m regular cell grid.")
+            boundary_text = (
+                "fully inside the AOI"
+                if grid_boundary_policy == "inside"
+                else "intersecting the AOI"
+            )
+            on_status(
+                f"Building a {cell_width_m:g} m regular cell grid {boundary_text}."
+            )
         cells, grid_spec = _build_grid_cells(
             elevation,
             slope,
@@ -221,6 +234,7 @@ def build_simulation_cells(
             landuse_features,
             aoi,
             cell_width_m,
+            grid_boundary_policy,
             elevation_method,
             slope_method,
             ogr,
@@ -358,6 +372,7 @@ def build_simulation_cells(
     common_request = {
         "mode": mode,
         "cell_width_m": float(cell_width_m) if mode == "grid" else None,
+        "grid_boundary_policy": grid_boundary_policy if mode == "grid" else None,
         "elevation_method": elevation_method if mode == "grid" else "centroid_bilinear",
         "slope_method": slope_method if mode == "grid" else "centroid_bilinear",
         "grid_topography_policy": (
@@ -673,7 +688,7 @@ def _read_features(path, field_name, target_srs, ogr, osr, *, integer=False):
 
 def _build_grid_cells(
     elevation, slope, soil_features, landuse_features, aoi, cell_width,
-    elevation_method, slope_method, ogr,
+    boundary_policy, elevation_method, slope_method, ogr,
 ):
     min_x, min_y, max_x, max_y = elevation.extent
     origin_x = math.floor(min_x / cell_width) * cell_width
@@ -700,6 +715,12 @@ def _build_grid_cells(
             active = square.Intersection(aoi)
             if active is None or active.IsEmpty() or active.GetArea() <= 0:
                 continue
+            square_area = cell_width * cell_width
+            aoi_fraction = min(1.0, active.GetArea() / square_area)
+            if boundary_policy == "inside" and not math.isclose(
+                aoi_fraction, 1.0, rel_tol=0.0, abs_tol=1e-9
+            ):
+                continue
             soil_id, soil_coverage = _dominant_category(active, soil_features)
             source_landuse, landuse_coverage = _dominant_category(
                 active, landuse_features
@@ -720,7 +741,7 @@ def _build_grid_cells(
                     )
             cells.append(
                 _Cell(
-                    active,
+                    square,
                     int(soil_id),
                     str(source_landuse),
                     soil_coverage,
@@ -729,7 +750,9 @@ def _build_grid_cells(
                     slope_value,
                     row=row + 1,
                     column=column + 1,
-                    aoi_fraction=min(1.0, active.GetArea() / (cell_width * cell_width)),
+                    aoi_fraction=(
+                        1.0 if boundary_policy == "inside" else aoi_fraction
+                    ),
                 )
             )
     return cells, (

@@ -127,6 +127,11 @@ class CellBuilderDialog(QDialog):
         self.cell_width.setDecimals(1)
         self.cell_width.setValue(250.0)
         self.cell_width.setSuffix(" m")
+        self.grid_boundary = QComboBox()
+        self.grid_boundary.addItem("Only squares fully inside the AOI", "inside")
+        self.grid_boundary.addItem(
+            "All full squares intersecting the AOI", "intersect"
+        )
         self.elevation_method = QComboBox()
         self.elevation_method.addItem("Median", "median")
         self.elevation_method.addItem("Dominant 1 m band", "dominant")
@@ -143,10 +148,18 @@ class CellBuilderDialog(QDialog):
             "use whole contiguous regions in this first version."
         )
         self.vector_note.setWordWrap(True)
+        self.grid_note = QLabel(
+            "Grid cells are always complete, equal-sized squares. Intersecting mode "
+            "allows the simulated grid footprint to extend beyond the AOI; soil and "
+            "land-use dominance still use only the overlapping portion."
+        )
+        self.grid_note.setWordWrap(True)
         layout.addRow("Mode", self.mode_combo)
         layout.addRow("Grid cell width", self.cell_width)
+        layout.addRow("AOI boundary", self.grid_boundary)
         layout.addRow("Elevation", self.elevation_method)
         layout.addRow("Slope", self.slope_method)
+        layout.addRow(self.grid_note)
         layout.addRow(self.vector_note)
         return group
 
@@ -297,6 +310,7 @@ class CellBuilderDialog(QDialog):
             "output": str(root),
             "mode": self.mode_combo.currentData(),
             "cell_width_m": float(self.cell_width.value()),
+            "grid_boundary_policy": self.grid_boundary.currentData(),
             "elevation_method": self.elevation_method.currentData(),
             "slope_method": self.slope_method.currentData(),
             "crops": crops,
@@ -331,8 +345,10 @@ class CellBuilderDialog(QDialog):
     def _update_mode(self):
         is_grid = self.mode_combo.currentData() == "grid"
         self.cell_width.setEnabled(is_grid)
+        self.grid_boundary.setEnabled(is_grid)
         self.elevation_method.setEnabled(is_grid)
         self.slope_method.setEnabled(is_grid)
+        self.grid_note.setVisible(is_grid)
         self.vector_note.setVisible(not is_grid)
 
     def _set_catalog(self, crops, landuses):

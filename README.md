@@ -36,18 +36,20 @@ The workspace lets the user:
 7. download AOI-clipped SoilGrids mean texture, coarse-fragment, organic-carbon,
    and bulk-density coverages for the complete 0–200 cm profile;
 8. normalize SoilGrids into editable full-profile polygons without applying a PTF;
-9. download CORINE Land Cover 2018 polygons intersecting the AOI as GeoJSON;
-10. normalize CORINE codes into readable, categorized land-use polygons;
-11. download AOI-clipped Copernicus DEM GLO-30 or GLO-90 elevation through the
+9. apply Rosetta 3 H2/H3 in a separate dialog to derive canonical hydraulic
+   values for every profile/horizon;
+10. download CORINE Land Cover 2018 polygons intersecting the AOI as GeoJSON;
+11. normalize CORINE codes into readable, categorized land-use polygons;
+12. download AOI-clipped Copernicus DEM GLO-30 or GLO-90 elevation through the
    Sentinel Hub Process API;
-12. normalize the DEM into aligned metric elevation-above-sea-level and percent-
+13. normalize the DEM into aligned metric elevation-above-sea-level and percent-
    slope rasters;
-13. open a separate cell-builder dialog, edit/import annual crop rotations, and
+14. open a separate cell-builder dialog, edit/import annual crop rotations, and
    allocate every normalized source class to one or more IdrAgra land uses;
-14. generate either regular grid cells with four aligned property rasters or
+15. generate either regular grid cells with four aligned property rasters or
    contiguous vector cells in a canonical GeoPackage;
-15. run acquisition and normalization independently or consecutively;
-16. load raw layers into collapsed, visible category groups such as `weather_raw`
+16. run acquisition and normalization independently or consecutively;
+17. load raw layers into collapsed, visible category groups such as `weather_raw`
    and `soil_raw`; numeric rasters use a first-band pseudocolor stretch so time
    bands are not mistaken for RGB channels. Geographic NetCDF grids are detected
    from their longitude/latitude axes and assigned WGS 84 automatically. If a
@@ -112,6 +114,8 @@ sampling/interpolation rules are known.
   `soc`, and `bdod` at all six standard depth intervals;
 - SoilGrids normalization into `soil_profiles.gpkg`, with a complete six-horizon
   attribute profile attached to each polygon and no PTF-derived values;
+- Rosetta 3 H2/H3 derivation into replaceable `soil_hydraulics.gpkg` metadata
+  and profile/horizon tables, including canonical v2/v3 fields and provenance;
 - AOI-filtered CORINE Land Cover 2018 vector acquisition from the EEA ArcGIS
   REST service, retaining the published `Code_18` classification;
 - CORINE normalization into an AOI-clipped minimal `landuse.shp`, categorized
@@ -124,6 +128,8 @@ sampling/interpolation rules are known.
 - a crop/rotation catalogue and percentage allocation editor, including import
   of existing IdrAgra `soil_uses.txt` tables;
 - grid and vector simulation-cell generation into `simulation_cells.gpkg`;
+  grid cells are always equal complete squares, with selectable fully-inside or
+  boundary-crossing AOI handling;
 - aligned soil-ID, land-use-ID, elevation, and slope rasters in grid mode;
 - an installable QGIS dialog with rectangle drawing, planning, background
   acquisition, and result-layer loading.
@@ -181,6 +187,7 @@ study_inputs/
     weather_daily_points.gpkg
   soil/
     soil_profiles.gpkg
+    soil_hydraulics.gpkg
   landuse/
     landuse.shp (+ Shapefile sidecars)
   topography/
@@ -199,6 +206,12 @@ Use **IdrAgra → Build IdrAgra simulation cells...** after the normalized soil,
 land-use, elevation, and slope inputs are ready. See
 [`docs/cell_view.md`](docs/cell_view.md) for the cell schema, aggregation rules,
 and current vector-allocation limitation.
+
+Use **IdrAgra → Derive soil hydraulic properties...** after normalizing soil.
+The default Rosetta H3 run uses texture and bulk density; H2 can be selected to
+use texture alone. Required inputs, generated outputs, and unused normalized
+fields are highlighted separately. See [`docs/soil_ptf.md`](docs/soil_ptf.md)
+for equations, units, validation, uncertainty, and the output schema.
 
 The GeoPackage contains one `weather_daily_points` layer. Each row represents
 one weather grid centre on one date and contains the date, location ID, point
@@ -237,10 +250,9 @@ Cells missing any input in any horizon are excluded initially. Every NoData
 cell in the acquired AOI raster is then filled from the nearest valid soil
 class, including corridors connected to the raster boundary, so the polygon
 layer covers the full AOI. The polygonized raster-cell boundary is then clipped
-to the exact selected AOI rectangle. PTF
-application is intentionally a later transformation: it can add hydraulic
-columns to this layer or create a separate IdrAgra-ready soil dataset before
-final export.
+to the exact selected AOI rectangle. PTF application remains a separate,
+repeatable transformation and writes `soil_hydraulics.gpkg` without modifying
+these normalized polygons.
 
 When loaded by the plugin, `soil_profiles` is styled with stable categorical
 colors keyed by `profile_id`. The colors look shuffled but are deterministic,

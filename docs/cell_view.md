@@ -23,8 +23,18 @@ layer remains unchanged and does not need a numerical IdrAgra ID.
 
 The requested cell width is interpreted in the metric CRS of the normalized
 topography. The output grid is deterministically aligned to multiples of that
-width. Boundary cell geometry is clipped to the AOI and records its actual area
-and its fraction of the complete square.
+width. Every emitted geometry is a complete square of exactly that width; grid
+cells are never clipped to the AOI. The selectable boundary policy either:
+
+- retains only squares fully inside the AOI; or
+- retains every full square with a positive-area AOI intersection, allowing the
+  simulated footprint to cross the boundary.
+
+The `aoi_fraction` field records how much of each square overlaps the AOI. It is
+always 1 in the first mode. In crossing mode, soil and source land-use dominance
+are calculated only over the overlapping portion, while `area_m2` remains the
+area of the complete simulation square. Raster positions excluded by the chosen
+policy are NoData.
 
 Soil and source land-use categories are selected by greatest intersected area.
 Elevation defaults to the median of covered source pixels. Slope defaults to

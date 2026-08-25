@@ -1,8 +1,8 @@
 [general]
 name=IdrAgra Input Gatherer
-description=Gather normalized IdrAgra inputs and build a simulation-cell view.
-about=Workspace interface for independently acquiring and transforming weather, soil, land-use, and topography inputs, then combining them into grid or vector simulation cells with reproducible provenance. It does not export final IdrAgra input files yet.
-version=0.12.1
+description=Gather normalized IdrAgra inputs, derive soil hydraulics, and build a simulation-cell view.
+about=Workspace interface for independently acquiring and transforming weather, soil, land-use, and topography inputs, deriving documented soil hydraulic properties with Rosetta, then combining spatial inputs into grid or vector simulation cells with reproducible provenance. It does not export final IdrAgra input files yet.
+version=0.14.0
 qgisMinimumVersion=3.28
 qgisMaximumVersion=4.99
 author=RITA tools
