@@ -376,9 +376,7 @@ def _process_landuse(task, request, bbox):
         raw_paths[0],
         request["output"],
         bbox=bbox,
-        on_status=lambda message: _report_status(
-            request, "Normalize land use: ", message
-        ),
+        on_status=lambda message: _report_status(request, "Normalize land use: ", message),
     )
     outputs.append(normalized.path)
     task.setProgress(99)

@@ -12,14 +12,9 @@ OUTPUT_NAME = "landuse.shp"
 OUTPUT_LAYER = "landuse"
 CODE_FIELD = "Code_18"
 CATEGORY_FIELD = "landuse"
-NOMENCLATURE_URL = (
-    "https://land.copernicus.eu/content/"
-    "corine-land-cover-nomenclature-guidelines/html/"
-)
+NOMENCLATURE_URL = ("https://land.copernicus.eu/content/corine-land-cover-nomenclature-guidelines/html/")
 
-# Official level-three CORINE Land Cover nomenclature. Keeping this lookup in
-# the normalizer makes the downloaded source code an implementation detail;
-# the editable output exposes the meaningful class name instead.
+# Official level-three CORINE Land Cover nomenclature. During normalization, the numeric code is replaced with the descriptive string.
 CORINE_CATEGORIES = {
     111: "Continuous urban fabric",
     112: "Discontinuous urban fabric",
@@ -77,25 +72,7 @@ class CorineNormalizationResult:
     category_count: int
 
 
-def corine_category(code: object) -> str:
-    """Return the official level-three category for a CORINE class code."""
-
-    if isinstance(code, bool) or code is None:
-        raise ValueError(f"invalid CORINE class code: {code!r}")
-    text = str(code).strip()
-    try:
-        numeric = float(text)
-        integer = int(numeric)
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise ValueError(f"invalid CORINE class code: {code!r}") from exc
-    if numeric != integer:
-        raise ValueError(f"invalid CORINE class code: {code!r}")
-    try:
-        return CORINE_CATEGORIES[integer]
-    except KeyError as exc:
-        raise ValueError(f"unsupported CORINE class code: {integer}") from exc
-
-
+# Takes a raw CORINE vector layer and produces a minimal categorized shapefile with only the land-use category.
 def normalize_corine_file(
     source_path: str | Path,
     output_root: str | Path,
@@ -103,12 +80,6 @@ def normalize_corine_file(
     bbox: BoundingBox | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> CorineNormalizationResult:
-    """Create a minimal categorized shapefile from a raw CORINE vector layer.
-
-    The shapefile has OGR's intrinsic feature ID plus one text attribute named
-    ``landuse``. Source identifiers, area estimates, remarks, and the numeric
-    CORINE code remain available only in the raw provenance file.
-    """
 
     source = Path(source_path).resolve()
     if not source.is_file():
@@ -133,13 +104,14 @@ def normalize_corine_file(
     if source_layer is None:
         source_database = None
         raise ValueError(f"CORINE input contains no vector layer: {source}")
+
+    # Find the index of the column listing landuse codes
     source_definition = source_layer.GetLayerDefn()
     code_index = next(
         (
             index
             for index in range(source_definition.GetFieldCount())
-            if source_definition.GetFieldDefn(index).GetName().casefold()
-            == CODE_FIELD.casefold()
+            if source_definition.GetFieldDefn(index).GetName().casefold() == CODE_FIELD.casefold()
         ),
         -1,
     )
@@ -247,10 +219,26 @@ def normalize_corine_file(
         )
     return CorineNormalizationResult(output, polygon_count, len(categories))
 
+# Look in the CORINE_CATEGORIES dictionary for a specific code and return the corresponding category string
+def corine_category(code: object) -> str:
+    if isinstance(code, bool) or code is None:
+        raise ValueError(f"invalid CORINE class code: {code!r}")
+    text = str(code).strip()
+    try:
+        numeric = float(text)
+        integer = int(numeric)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"invalid CORINE class code: {code!r}") from exc
+    if numeric != integer:
+        raise ValueError(f"invalid CORINE class code: {code!r}")
+    try:
+        return CORINE_CATEGORIES[integer]
+    except KeyError as exc:
+        raise ValueError(f"unsupported CORINE class code: {integer}") from exc
 
+
+# Replace all shapefile components while retaining a recoverable old set.
 def _replace_shapefile(temporary: Path, target: Path) -> None:
-    """Replace all shapefile components while retaining a recoverable old set."""
-
     new_components = [temporary.with_suffix(suffix) for suffix in _SHAPEFILE_SUFFIXES]
     new_components = [path for path in new_components if path.exists()]
     if not temporary.exists() or not new_components:

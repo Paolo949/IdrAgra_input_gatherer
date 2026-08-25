@@ -115,4 +115,3 @@ def _bbox_window(args: argparse.Namespace) -> tuple[BoundingBox, DateWindow]:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
