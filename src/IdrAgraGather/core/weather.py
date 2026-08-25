@@ -96,18 +96,14 @@ def validate_weather_csv(
                     issues.append(ValidationIssue(row_number, field, "error", "not a number"))
                 else:
                     if not math.isfinite(values[field]):
-                        issues.append(
-                            ValidationIssue(row_number, field, "error", "must be a finite number")
-                        )
+                        issues.append(ValidationIssue(row_number, field, "error", "must be a finite number"))
                         del values[field]
 
             _check_ranges(row_number, values, issues)
             if parsed_date is not None and location_id:
                 key = (parsed_date, location_id)
                 if key in seen:
-                    issues.append(
-                        ValidationIssue(row_number, None, "error", "duplicate date/location row")
-                    )
+                    issues.append(ValidationIssue(row_number, None, "error", "duplicate date/location row"))
                 seen.add(key)
                 dates_by_location.setdefault(location_id, []).append(parsed_date)
 
@@ -134,9 +130,7 @@ def _date(
     try:
         return date.fromisoformat(raw_value.strip())
     except ValueError:
-        issues.append(
-            ValidationIssue(row_number, DATE_FIELD, "error", "expected ISO date yyyy-mm-dd")
-        )
+        issues.append(ValidationIssue(row_number, DATE_FIELD, "error", "expected ISO date yyyy-mm-dd"))
         return None
 
 

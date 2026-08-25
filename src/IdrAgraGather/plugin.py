@@ -4,9 +4,9 @@ import os
 from pathlib import Path
 import re
 
-from qgis.PyQt.QtCore import QCoreApplication, QDir, QObject, QSettings, pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
-from qgis.PyQt.QtGui import QColor # pyright: ignore[reportAttributeAccessIssue]
-from qgis.PyQt.QtWidgets import QAction, QMessageBox # pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtCore import QCoreApplication, QDir, QObject, QSettings, pyqtSignal  # pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtGui import QColor  # pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtWidgets import QAction, QMessageBox  # pyright: ignore[reportAttributeAccessIssue]
 from qgis.core import (
     Qgis,
     QgsApplication,
@@ -117,9 +117,8 @@ def _run_acquisition(task, request):
     }
 
 
+# Run version-neutral cell generation in a QGIS background task.
 def _run_cell_builder(task, request):
-    """Run version-neutral cell generation in a QGIS background task."""
-
     status_callback = request.get("status_callback")
 
     def update_status(message):
@@ -149,9 +148,8 @@ def _run_cell_builder(task, request):
     }
 
 
+# Run a soil PTF in a QGIS background task.
 def _run_soil_ptf(task, request):
-    """Run a soil PTF in a QGIS background task."""
-
     status_callback = request.get("status_callback")
 
     def update_status(message):
@@ -177,9 +175,8 @@ def _run_soil_ptf(task, request):
     }
 
 
+# Run the IdrAgra v2 exporter in a QGIS background task.
 def _run_v2_export(task, request):
-    """Run the IdrAgra v2 exporter in a QGIS background task."""
-
     status_callback = request.get("status_callback")
     task.setProgress(5)
     result = export_v2_workspace(
@@ -338,9 +335,7 @@ def _process_soil(task, request, bbox):
             request["output"],
             bbox,
             is_cancelled=task.isCanceled,
-            on_progress=lambda done, total, _path: task.setProgress(
-                max(task.progress(), 96 + 3 * done / total)
-            ),
+            on_progress=lambda done, total, _path: task.setProgress(max(task.progress(), 96 + 3 * done / total)),
             on_status=lambda message: _report_status(request, "SoilGrids: ", message),
         )
 
@@ -385,9 +380,7 @@ def _process_landuse(task, request, bbox):
             request["output"],
             bbox,
             is_cancelled=task.isCanceled,
-            on_progress=lambda done, total, _path: task.setProgress(
-                max(task.progress(), 95 + 4 * done / total)
-            ),
+            on_progress=lambda done, total, _path: task.setProgress(max(task.progress(), 95 + 4 * done / total)),
             on_status=lambda message: _report_status(request, "CORINE: ", message),
         )
 
@@ -426,12 +419,8 @@ def _process_topography(task, request, bbox):
             client_id=request.get("copernicus_client_id"),
             client_secret=request.get("copernicus_client_secret"),
             is_cancelled=task.isCanceled,
-            on_progress=lambda done, total, _path: task.setProgress(
-                max(task.progress(), 5 + 80 * done / total)
-            ),
-            on_status=lambda message: _report_status(
-                request, "Copernicus DEM: ", message
-            ),
+            on_progress=lambda done, total, _path: task.setProgress(max(task.progress(), 5 + 80 * done / total)),
+            on_status=lambda message: _report_status(request, "Copernicus DEM: ", message),
         )
 
     outputs = list(raw_paths)
@@ -458,9 +447,7 @@ def _process_topography(task, request, bbox):
         bbox=bbox,
         resolution_m=request.get("topography_resolution_m", 30),
         dem_instance=instance,
-        on_status=lambda message: _report_status(
-            request, "Normalize topography: ", message
-        ),
+        on_status=lambda message: _report_status(request, "Normalize topography: ", message),
     )
     outputs.extend(normalized.paths)
     task.setProgress(99)
@@ -507,12 +494,8 @@ class IdrAgraGatherPlugin:
         self.iface.addToolBarIcon(cell_action)
         self.cell_action = cell_action
 
-        ptf_action = QAction(
-            "Derive soil hydraulic properties...", self.iface.mainWindow()
-        )
-        ptf_action.setToolTip(
-            "Apply a pedotransfer function to normalized soil profiles"
-        )
+        ptf_action = QAction("Derive soil hydraulic properties...", self.iface.mainWindow())
+        ptf_action.setToolTip("Apply a pedotransfer function to normalized soil profiles")
         ptf_action.triggered.connect(self.show_soil_ptf_dialog)
         self.iface.addPluginToMenu(MENU_NAME, ptf_action)
         self.iface.addToolBarIcon(ptf_action)
@@ -558,24 +541,6 @@ class IdrAgraGatherPlugin:
         if export_dialog is not None:
             export_dialog.close()
 
-    def show_dialog(self):
-        dialog = self.dialog
-        if dialog is None:
-            dialog = AcquisitionDialog(self.iface.mainWindow())
-            dialog.drawRequested.connect(self._start_drawing)
-            dialog.canvasExtentRequested.connect(self._use_canvas_extent)
-            dialog.runRequested.connect(self._run)
-            dialog.finished.connect(self._dialog_closed)
-            settings = QSettings()
-            default_output = _qgis_project().homePath() or QDir.homePath()
-            dialog.set_output_folder(
-                settings.value("IdrAgraGather/output", default_output, type=str)
-            )
-            self.dialog = dialog
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
-
     def show_cell_dialog(self):
         dialog = self.cell_dialog
         if dialog is None:
@@ -583,9 +548,7 @@ class IdrAgraGatherPlugin:
             dialog.runRequested.connect(self._run_cells)
             settings = QSettings()
             default_output = _qgis_project().homePath() or QDir.homePath()
-            dialog.set_workspace(
-                settings.value("IdrAgraGather/output", default_output, type=str)
-            )
+            dialog.set_workspace(settings.value("IdrAgraGather/output", default_output, type=str))
             self.cell_dialog = dialog
         dialog.show()
         dialog.raise_()
@@ -598,9 +561,7 @@ class IdrAgraGatherPlugin:
             dialog.runRequested.connect(self._run_ptf)
             settings = QSettings()
             default_output = _qgis_project().homePath() or QDir.homePath()
-            dialog.set_workspace(
-                settings.value("IdrAgraGather/output", default_output, type=str)
-            )
+            dialog.set_workspace(settings.value("IdrAgraGather/output", default_output, type=str))
             self.ptf_dialog = dialog
         dialog.show()
         dialog.raise_()
@@ -613,9 +574,7 @@ class IdrAgraGatherPlugin:
             dialog.runRequested.connect(self._run_v2_export)
             settings = QSettings()
             default_output = _qgis_project().homePath() or QDir.homePath()
-            dialog.set_workspace(
-                settings.value("IdrAgraGather/output", default_output, type=str)
-            )
+            dialog.set_workspace(settings.value("IdrAgraGather/output", default_output, type=str))
             self.v2_export_dialog = dialog
         dialog.show()
         dialog.raise_()
@@ -702,9 +661,7 @@ class IdrAgraGatherPlugin:
         if output.exists():
             removed = self._remove_project_layers_for_path(output)
             if removed:
-                dialog.append_log(
-                    f"Removed {removed} loaded hydraulic table(s) before replacement."
-                )
+                dialog.append_log(f"Removed {removed} loaded hydraulic table(s) before replacement.")
                 QCoreApplication.processEvents()
 
         QSettings().setValue("IdrAgraGather/output", request["output"])
@@ -782,8 +739,7 @@ class IdrAgraGatherPlugin:
             answer = QMessageBox.question(
                 self.iface.mainWindow(),
                 "Replace existing cell view?",
-                "A cell view already exists in this workspace. Replace its spatial "
-                "outputs with the new configuration?",
+                "A cell view already exists in this workspace. Replace its spatial outputs with the new configuration?",
                 MESSAGE_BUTTON.Yes | MESSAGE_BUTTON.No,
                 MESSAGE_BUTTON.No,
             )
@@ -829,14 +785,9 @@ class IdrAgraGatherPlugin:
             if dialog is not None:
                 dialog.append_log("Cell generation cancelled.")
             return
-        loaded = sum(
-            self._load_spatial_file(Path(path))
-            for path in result.get("load_paths", [])
-        )
+        loaded = sum(self._load_spatial_file(Path(path)) for path in result.get("load_paths", []))
         if dialog is not None:
-            dialog.append_log(
-                f"Completed: {result['cell_count']} cell(s); loaded {loaded} layer(s)."
-            )
+            dialog.append_log(f"Completed: {result['cell_count']} cell(s); loaded {loaded} layer(s).")
             for warning in result.get("warnings", []):
                 dialog.append_log("WARNING: " + warning)
         self.iface.messageBar().pushMessage(
@@ -870,6 +821,22 @@ class IdrAgraGatherPlugin:
         self.iface.actionPan().trigger()
         self.show_dialog()
 
+    def show_dialog(self):
+        dialog = self.dialog
+        if dialog is None:
+            dialog = AcquisitionDialog(self.iface.mainWindow())
+            dialog.drawRequested.connect(self._start_drawing)
+            dialog.canvasExtentRequested.connect(self._use_canvas_extent)
+            dialog.runRequested.connect(self._run)
+            dialog.finished.connect(self._dialog_closed)
+            settings = QSettings()
+            default_output = _qgis_project().homePath() or QDir.homePath()
+            dialog.set_output_folder(settings.value("IdrAgraGather/output", default_output, type=str))
+            self.dialog = dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
     def _use_canvas_extent(self):
         self._set_canvas_rectangle(self.canvas.extent())
 
@@ -887,9 +854,7 @@ class IdrAgraGatherPlugin:
         bbox = geometry.boundingBox()
         dialog = self.dialog
         if dialog is not None:
-            dialog.set_bbox(
-                bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum()
-            )
+            dialog.set_bbox(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum())
             dialog.append_log("Study area selected in EPSG:4326.")
 
     def _run(self, action):
@@ -918,15 +883,11 @@ class IdrAgraGatherPlugin:
                     MESSAGE_BUTTON.No,
                 )
                 if answer != MESSAGE_BUTTON.Yes:
-                    dialog.append_log(
-                        "Transformation cancelled; existing normalized data kept."
-                    )
+                    dialog.append_log("Transformation cancelled; existing normalized data kept.")
                     return
                 removed = self._remove_project_layers_for_path(normalized_path)
                 if removed:
-                    dialog.append_log(
-                        f"Removed {removed} loaded normalized layer(s) before overwrite."
-                    )
+                    dialog.append_log(f"Removed {removed} loaded normalized layer(s) before overwrite.")
                     # Let QGIS dispose its providers before the worker attempts to
                     # replace the GeoPackage on Windows.
                     QCoreApplication.processEvents()
@@ -944,15 +905,11 @@ class IdrAgraGatherPlugin:
                     MESSAGE_BUTTON.No,
                 )
                 if answer != MESSAGE_BUTTON.Yes:
-                    dialog.append_log(
-                        "Transformation cancelled; existing normalized soil data kept."
-                    )
+                    dialog.append_log("Transformation cancelled; existing normalized soil data kept.")
                     return
                 removed = self._remove_project_layers_for_path(normalized_path)
                 if removed:
-                    dialog.append_log(
-                        f"Removed {removed} loaded normalized soil layer(s) before overwrite."
-                    )
+                    dialog.append_log(f"Removed {removed} loaded normalized soil layer(s) before overwrite.")
                     QCoreApplication.processEvents()
 
         if request.get("normalize_landuse"):
@@ -968,15 +925,11 @@ class IdrAgraGatherPlugin:
                     MESSAGE_BUTTON.No,
                 )
                 if answer != MESSAGE_BUTTON.Yes:
-                    dialog.append_log(
-                        "Transformation cancelled; existing normalized land-use data kept."
-                    )
+                    dialog.append_log("Transformation cancelled; existing normalized land-use data kept.")
                     return
                 removed = self._remove_project_layers_for_path(normalized_path)
                 if removed:
-                    dialog.append_log(
-                        f"Removed {removed} loaded normalized land-use layer(s) before overwrite."
-                    )
+                    dialog.append_log(f"Removed {removed} loaded normalized land-use layer(s) before overwrite.")
                     QCoreApplication.processEvents()
 
         QSettings().setValue("IdrAgraGather/output", request["output"])
@@ -1068,9 +1021,7 @@ class IdrAgraGatherPlugin:
         # directory name.
         vector_uri = Path(path).resolve().as_posix()
         details = _qgis_provider_registry().querySublayers(vector_uri)
-        options = QgsProviderSublayerDetails.LayerOptions(
-            _qgis_project().transformContext()
-        )
+        options = QgsProviderSublayerDetails.LayerOptions(_qgis_project().transformContext())
         loaded = 0
         for detail in details:
             layer = detail.toLayer(options)
@@ -1092,14 +1043,12 @@ class IdrAgraGatherPlugin:
             dialog = self.dialog
             if dialog is not None:
                 provider_error = layer.error().summary() or "OGR returned no details"
-                dialog.append_log(
-                    f"WARNING: QGIS could not load vector output {path}: {provider_error}"
-                )
+                dialog.append_log(f"WARNING: QGIS could not load vector output {path}: {provider_error}")
         return loaded
 
+    # Categorize normalized soil profiles using stable colors.
     @staticmethod
     def _style_normalized_soil_layer(layer, path):
-        """Categorize normalized soil profiles using stable colors."""
         if Path(path).name.lower() != NORMALIZED_SOIL_NAME:
             return
         field_index = layer.fields().indexFromName("profile_id")
@@ -1112,9 +1061,9 @@ class IdrAgraGatherPlugin:
         layer.setRenderer(QgsCategorizedSymbolRenderer("profile_id", categories))
         layer.triggerRepaint()
 
+    # Categorize normalized CORINE polygons by their readable class.
     @staticmethod
     def _style_normalized_landuse_layer(layer, path):
-        """Categorize normalized CORINE polygons by their readable class."""
         if Path(path).name.lower() != NORMALIZED_LANDUSE_NAME:
             return
         field_index = layer.fields().indexFromName("landuse")
@@ -1127,9 +1076,9 @@ class IdrAgraGatherPlugin:
         layer.setRenderer(QgsCategorizedSymbolRenderer("landuse", categories))
         layer.triggerRepaint()
 
+    # Categorize canonical cells by their allocated IdrAgra land-use ID.
     @staticmethod
     def _style_simulation_cells_layer(layer, path):
-        """Categorize canonical cells by their allocated IdrAgra land-use ID."""
         if Path(path).name.lower() != CELLS_NAME:
             return
         field_index = layer.fields().indexFromName("landuse_id")
@@ -1142,9 +1091,9 @@ class IdrAgraGatherPlugin:
         layer.setRenderer(QgsCategorizedSymbolRenderer("landuse_id", categories))
         layer.triggerRepaint()
 
+    # Build QGIS 3/4-compatible categories with deterministic colors.
     @staticmethod
     def _categories_for_values(layer, values):
-        """Build QGIS 3/4-compatible categories with deterministic colors."""
         base_symbol = QgsSymbol.defaultSymbol(layer.geometryType())
         if base_symbol is None:
             return []
@@ -1161,9 +1110,7 @@ class IdrAgraGatherPlugin:
 
     def _load_netcdf_sublayers(self, path):
         details = _qgis_provider_registry().querySublayers(str(path))
-        options = QgsProviderSublayerDetails.LayerOptions(
-            _qgis_project().transformContext()
-        )
+        options = QgsProviderSublayerDetails.LayerOptions(_qgis_project().transformContext())
         loaded = 0
         for detail in details:
             layer = detail.toLayer(options)
@@ -1185,8 +1132,8 @@ class IdrAgraGatherPlugin:
                 return 1
         return loaded
 
+    # Assign or repair WGS 84 georeferencing from NetCDF coordinate axes.
     def _georeference_netcdf_raster(self, layer, path, variable_name):
-        """Assign or repair WGS 84 georeferencing from NetCDF coordinate axes."""
         axes = self._netcdf_geographic_axes(path)
         if axes is None:
             return layer
@@ -1202,15 +1149,11 @@ class IdrAgraGatherPlugin:
             layer.setCrs(wgs84)
             return layer
 
-        repaired = self._create_georeferenced_preview(
-            layer, path, variable_name, bounds, wgs84
-        )
+        repaired = self._create_georeferenced_preview(layer, path, variable_name, bounds, wgs84)
         if repaired is not None:
             dialog = self.dialog
             if dialog is not None:
-                dialog.append_log(
-                    f"Display: repaired missing NetCDF georeferencing for {path.name}."
-                )
+                dialog.append_log(f"Display: repaired missing NetCDF georeferencing for {path.name}.")
             return repaired
 
         # The coordinate axes prove that the source data are geographic. This is
@@ -1254,9 +1197,7 @@ class IdrAgraGatherPlugin:
                 # Both current weather providers use a 0.1 degree grid.
                 spacing = 0.1
             else:
-                intervals = [
-                    right - left for left, right in zip(ordered, ordered[1:])
-                ]
+                intervals = [right - left for left, right in zip(ordered, ordered[1:])]
                 spacing = sum(intervals) / len(intervals)
                 tolerance = max(abs(spacing) * 0.01, 1e-8)
                 if any(abs(interval - spacing) > tolerance for interval in intervals):
@@ -1280,10 +1221,7 @@ class IdrAgraGatherPlugin:
             extent.xMaximum(),
             extent.yMinimum(),
         )
-        return all(
-            abs(found - expected) <= tolerance
-            for found, expected in zip(actual, (west, north, east, south))
-        )
+        return all(abs(found - expected) <= tolerance for found, expected in zip(actual, (west, north, east, south)))
 
     @staticmethod
     def _create_georeferenced_preview(layer, path, variable_name, bounds, crs):
@@ -1315,9 +1253,9 @@ class IdrAgraGatherPlugin:
         except (ImportError, RuntimeError, TypeError, ValueError, OSError):
             return None
 
+    # Give raw numeric rasters a visible, deterministic single-band style.
     @staticmethod
     def _style_raster_layer(layer):
-        """Give raw numeric rasters a visible, deterministic single-band style."""
         if layer.bandCount() < 1:
             return
         provider = layer.dataProvider()
@@ -1357,9 +1295,9 @@ class IdrAgraGatherPlugin:
         layer.setRenderer(QgsSingleBandPseudoColorRenderer(provider, 1, raster_shader))
         layer.triggerRepaint()
 
+    # Keep the AOI useful as a boundary without hiding acquired rasters.
     @staticmethod
     def _style_aoi_layer(layer, path):
-        """Keep the AOI useful as a boundary without hiding acquired rasters."""
         if Path(path).stem.lower() != "aoi":
             return
         symbol = QgsFillSymbol.createSimple(
@@ -1397,20 +1335,25 @@ class IdrAgraGatherPlugin:
         if subgroup_name:
             target_group = group.findGroup(subgroup_name)
             if target_group is None:
-                target_group = group.addGroup(subgroup_name)
+                target_group = group.insertGroup(0, subgroup_name)
                 if target_group is None:
                     raise RuntimeError("QGIS could not create an input subgroup.")
                 target_group.setExpanded(not is_raw)
+            elif group.children() and group.children()[0] is not target_group:
+                parent = target_group.parent()
+                if parent is not None:
+                    parent.takeChild(target_group)
+                group.insertChildNode(0, target_group)
             # Keep raw groups collapsed, but visible, so acquisition results
             # appear on the map without another manual toggle. This also repairs
             # a group left unchecked by an earlier plugin version.
             target_group.setItemVisibilityChecked(True)
         project.addMapLayer(layer, False)
-        target_group.addLayer(layer)
+        target_group.insertLayer(0, layer)
 
+    # Remove loaded layers backed by *path* and return the number removed.
     @staticmethod
     def _remove_project_layers_for_path(path):
-        """Remove loaded layers backed by *path* and return the number removed."""
         target = os.path.normcase(os.path.abspath(str(path)))
         project = _qgis_project()
         layer_ids = []

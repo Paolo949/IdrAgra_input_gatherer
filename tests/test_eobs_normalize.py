@@ -100,6 +100,15 @@ class EobsNormalizeTests(unittest.TestCase):
         np.testing.assert_array_equal(rows, np.array([1, 2]))
         np.testing.assert_array_equal(columns, np.array([1, 2, 3]))
 
+    def test_spatial_buffer_stops_at_available_dataset_edges(self):
+        rows, columns = _spatial_indices(
+            np.array([46.0, 46.1]),
+            np.array([9.2, 9.3]),
+            BoundingBox(9.2, 46.0, 9.3, 46.1),
+        )
+        np.testing.assert_array_equal(rows, np.array([0, 1]))
+        np.testing.assert_array_equal(columns, np.array([0, 1]))
+
 
 if __name__ == "__main__":
     unittest.main()

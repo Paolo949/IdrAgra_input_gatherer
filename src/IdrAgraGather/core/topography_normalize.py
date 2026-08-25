@@ -37,20 +37,11 @@ class TopographyNormalizationResult:
         return self.elevation_path, self.slope_path
 
 
-def utm_epsg_for_bbox(bbox: BoundingBox) -> int:
-    """Choose the local WGS 84 UTM CRS at the centre of a compact AOI."""
-
-    longitude = (bbox.west + bbox.east) / 2.0
-    latitude = (bbox.south + bbox.north) / 2.0
-    if not -80.0 <= latitude <= 84.0:
-        raise ValueError(
-            "Automatic metric topography normalization supports AOIs between "
-            "80°S and 84°N (the WGS 84 UTM coverage)."
-        )
-    zone = min(60, max(1, int((longitude + 180.0) // 6.0) + 1))
-    return (32600 if latitude >= 0 else 32700) + zone
-
-
+# Mosaic, clip and reproject a DEM, then derive percent slope.
+#
+# The elevation raster is kept in orthometric metres above mean sea level.
+# A local metric CRS is essential here: terrain slope must not be calculated
+# with longitude/latitude degrees as horizontal units.
 def normalize_dem_files(
     source_paths: Iterable[str | Path],
     output_root: str | Path,
@@ -60,13 +51,6 @@ def normalize_dem_files(
     dem_instance: str | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> TopographyNormalizationResult:
-    """Mosaic, clip and reproject a DEM, then derive percent slope.
-
-    The elevation raster is kept in orthometric metres above mean sea level.
-    A local metric CRS is essential here: terrain slope must not be calculated
-    with longitude/latitude degrees as horizontal units.
-    """
-
     sources = tuple(Path(path).resolve() for path in source_paths)
     if not sources:
         raise ValueError("At least one DEM input is required.")
@@ -104,10 +88,7 @@ def normalize_dem_files(
     ]
 
     if on_status:
-        on_status(
-            f"Mosaicking and clipping {len(sources)} DEM tile(s) in {target_crs} "
-            f"at {resolution_m:g} m."
-        )
+        on_status(f"Mosaicking and clipping {len(sources)} DEM tile(s) in {target_crs} at {resolution_m:g} m.")
     with TemporaryDirectory(prefix=".topography-", dir=output_dir) as temporary:
         temporary_dir = Path(temporary)
         temporary_elevation = temporary_dir / ELEVATION_NAME
@@ -222,6 +203,18 @@ def normalize_dem_files(
     )
 
 
+# Choose the local WGS 84 UTM CRS at the centre of a compact AOI.
+def utm_epsg_for_bbox(bbox: BoundingBox) -> int:
+    longitude = (bbox.west + bbox.east) / 2.0
+    latitude = (bbox.south + bbox.north) / 2.0
+    if not -80.0 <= latitude <= 84.0:
+        raise ValueError(
+            "Automatic metric topography normalization supports AOIs between 80°S and 84°N (the WGS 84 UTM coverage)."
+        )
+    zone = min(60, max(1, int((longitude + 180.0) // 6.0) + 1))
+    return (32600 if latitude >= 0 else 32700) + zone
+
+
 def _write_cutline(path: Path, bbox: BoundingBox) -> None:
     ring = [
         [bbox.west, bbox.south],
@@ -268,8 +261,7 @@ def _replace_outputs(temporary_paths: tuple[Path, ...], targets: tuple[Path, ...
             if backup.exists():
                 backup.replace(target)
         raise RuntimeError(
-            "Could not replace normalized topography because a raster is open in "
-            "QGIS or another application."
+            "Could not replace normalized topography because a raster is open in QGIS or another application."
         ) from exc
     except Exception:
         for installed in installed_new:

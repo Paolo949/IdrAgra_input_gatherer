@@ -8,30 +8,9 @@ from ..manifest import Manifest
 from ..models import BoundingBox
 
 
-QUERY_URL = (
-    "https://image.discomap.eea.europa.eu/arcgis/rest/services/"
-    "Corine/CLC2018_WM/MapServer/0/query"
-)
+QUERY_URL = "https://image.discomap.eea.europa.eu/arcgis/rest/services/Corine/CLC2018_WM/MapServer/0/query"
 PAGE_SIZE = 1000
 DATASET = "Corine Land Cover 2018 vector"
-
-
-def build_query_url(bbox: BoundingBox, *, offset: int = 0) -> str:
-    query = {
-        "where": "1=1",
-        "geometry": f"{bbox.west},{bbox.south},{bbox.east},{bbox.north}",
-        "geometryType": "esriGeometryEnvelope",
-        "inSR": "4326",
-        "spatialRel": "esriSpatialRelIntersects",
-        "outFields": "OBJECTID,Code_18,Remark,Area_Ha,ID",
-        "returnGeometry": "true",
-        "outSR": "4326",
-        "orderByFields": "OBJECTID",
-        "resultOffset": str(offset),
-        "resultRecordCount": str(PAGE_SIZE),
-        "f": "geojson",
-    }
-    return QUERY_URL + "?" + urlencode(query)
 
 
 def fetch(
@@ -86,9 +65,7 @@ def fetch(
         }
         temporary = target.with_suffix(".geojson.part")
         try:
-            temporary.write_text(
-                json.dumps(collection, ensure_ascii=False), encoding="utf-8"
-            )
+            temporary.write_text(json.dumps(collection, ensure_ascii=False), encoding="utf-8")
             temporary.replace(target)
         finally:
             if temporary.exists():
@@ -107,3 +84,21 @@ def fetch(
     if on_progress:
         on_progress(1, 1, target)
     return [target]
+
+
+def build_query_url(bbox: BoundingBox, *, offset: int = 0) -> str:
+    query = {
+        "where": "1=1",
+        "geometry": f"{bbox.west},{bbox.south},{bbox.east},{bbox.north}",
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "OBJECTID,Code_18,Remark,Area_Ha,ID",
+        "returnGeometry": "true",
+        "outSR": "4326",
+        "orderByFields": "OBJECTID",
+        "resultOffset": str(offset),
+        "resultRecordCount": str(PAGE_SIZE),
+        "f": "geojson",
+    }
+    return QUERY_URL + "?" + urlencode(query)

@@ -51,68 +51,10 @@ class _Station:
     rows: tuple[tuple[date, tuple[float, ...]], ...]
 
 
-def aggregate_profile_layers(
-    horizons: Sequence[dict[str, float]], layer_thicknesses_m=(0.1, 0.9)
-) -> tuple[dict[str, float], ...]:
-    """Collapse physical horizons into v2 layers using legacy IdrAgraTools rules."""
-
-    if not horizons:
-        raise ValueError("A soil profile has no hydraulic horizons.")
-    boundaries = [0.0]
-    for thickness in layer_thicknesses_m:
-        if not math.isfinite(thickness) or thickness <= 0:
-            raise ValueError("v2 soil layer thicknesses must be positive.")
-        boundaries.append(boundaries[-1] + float(thickness))
-    ordered = sorted(horizons, key=lambda row: row["top_cm"])
-    available_bottom = max(float(row["bottom_cm"]) / 100.0 for row in ordered)
-    if available_bottom + 1e-9 < boundaries[-1]:
-        raise ValueError(
-            f"Soil profile ends at {available_bottom:g} m but v2 layers require "
-            f"{boundaries[-1]:g} m."
-        )
-    result = []
-    for lower, upper in zip(boundaries, boundaries[1:]):
-        overlaps = []
-        for row in ordered:
-            top = float(row["top_cm"]) / 100.0
-            bottom = float(row["bottom_cm"]) / 100.0
-            overlap = max(0.0, min(bottom, upper) - max(top, lower))
-            if overlap:
-                overlaps.append((row, overlap))
-        if sum(weight for _row, weight in overlaps) < upper - lower - 1e-8:
-            raise ValueError(f"Soil horizons do not completely cover {lower:g}-{upper:g} m.")
-        layer = {}
-        total = sum(weight for _row, weight in overlaps)
-        for field in HYDRAULIC_FIELDS:
-            values = [(float(row[field]), weight) for row, weight in overlaps]
-            if any(not math.isfinite(value) for value, _weight in values):
-                raise ValueError(f"Non-finite soil hydraulic value in {field}.")
-            if field == "ksat_mm_h":
-                if any(value <= 0 for value, _weight in values):
-                    raise ValueError("Ksat must be positive for harmonic aggregation.")
-                layer[field] = total / sum(weight / value for value, weight in values)
-            else:
-                layer[field] = sum(value * weight for value, weight in values) / total
-        theta_r = layer["theta_res"]
-        theta_wp = layer["theta_wp"]
-        theta_fc = layer["theta_fc"]
-        theta_sat = layer["theta_sat"]
-        if not 0 <= theta_r < theta_wp < theta_fc < theta_sat <= 1:
-            raise ValueError(
-                "v2 water contents must satisfy 0 <= theta_res < theta_wp < "
-                "theta_fc < theta_sat <= 1."
-            )
-        ratio = (theta_fc - theta_r) / (theta_sat - theta_r)
-        if not 0 < ratio < 1:
-            raise ValueError("v2 N requires theta_res < theta_fc < theta_sat.")
-        # Legacy IdrAgraTools uses 0.2 mm/day as the reference conductivity.
-        layer["v2_brooks_corey_n"] = math.log(
-            (0.2 / 24.0) / layer["ksat_mm_h"]
-        ) / math.log(ratio)
-        result.append(layer)
-    return tuple(result)
-
-
+# Create a conservative, static/rain-fed IdrAgra v2 package.
+#
+# Phenology is deliberately not synthesized. The package includes CropCoef-ready
+# crop rotations and a parameter template documenting the missing phenology step.
 def export_v2_workspace(
     workspace: str | Path,
     destination: str | Path,
@@ -125,24 +67,14 @@ def export_v2_workspace(
     overwrite: bool = False,
     on_status: Callable[[str], None] | None = None,
 ) -> V2ExportResult:
-    """Create a conservative, static/rain-fed IdrAgra v2 package.
-
-    Phenology is deliberately not synthesized. The package includes CropCoef-ready
-    crop rotations and a parameter template documenting the missing phenology step.
-    """
-
     root = Path(workspace).resolve()
     destination = Path(destination).resolve()
     if destination == root or root.is_relative_to(destination):
-        raise ValueError(
-            "The export destination cannot be the workspace or one of its parent folders."
-        )
+        raise ValueError("The export destination cannot be the workspace or one of its parent folders.")
     if destination.is_relative_to(root):
         relative_destination = destination.relative_to(root)
         if not relative_destination.parts or relative_destination.parts[0] != "exports":
-            raise ValueError(
-                "Exports stored inside the workspace must be below its 'exports' folder."
-            )
+            raise ValueError("Exports stored inside the workspace must be below its 'exports' folder.")
     if destination.exists() and not destination.is_dir():
         raise ValueError(f"Export destination is not a folder: {destination}")
     required = {
@@ -181,10 +113,7 @@ def export_v2_workspace(
     crops, landuses, _allocations = read_configuration(required["land-use configuration"])
     landuse_by_id = {item.landuse_id: item for item in landuses}
     configured_ids = set(landuse_by_id)
-    present_ids = {
-        int(value) for value in np.unique(landuse_grid.values)
-        if value != landuse_grid.nodata
-    }
+    present_ids = {int(value) for value in np.unique(landuse_grid.values) if value != landuse_grid.nodata}
     unknown = sorted(present_ids - configured_ids)
     if unknown:
         raise ValueError(f"Cell grid refers to undefined land-use ID(s): {unknown}")
@@ -193,26 +122,20 @@ def export_v2_workspace(
         raise ValueError("No crop-bearing land-use cells are available for v2 export.")
     if set(active_ids) != set(range(1, max(active_ids) + 1)):
         raise ValueError(
-            "Active v2 land-use IDs must be contiguous and start at 1; edit the "
-            "cell-builder catalogue before exporting."
+            "Active v2 land-use IDs must be contiguous and start at 1; edit the cell-builder catalogue before exporting."
         )
     mask = np.isin(landuse_grid.values, active_ids) & (soil_grid.values != soil_grid.nodata)
     if not np.any(mask):
         raise ValueError("No cells remain after excluding non-simulated land uses.")
-    invalid_slope = mask & (
-        (slope_grid.values == slope_grid.nodata) | ~np.isfinite(slope_grid.values)
-    )
+    invalid_slope = mask & ((slope_grid.values == slope_grid.nodata) | ~np.isfinite(slope_grid.values))
     if np.any(invalid_slope):
-        raise ValueError(
-            f"{int(np.count_nonzero(invalid_slope))} simulated cell(s) have no slope value."
-        )
+        raise ValueError(f"{int(np.count_nonzero(invalid_slope))} simulated cell(s) have no slope value.")
 
     if on_status:
         on_status("Aggregating six soil horizons into the two IdrAgra v2 layers.")
     profiles, soil_metadata = _read_hydraulic_profiles(required["soil hydraulics"], ogr)
     profile_layers = {
-        profile_id: aggregate_profile_layers(rows, (evap_layer_m, root_layer_m))
-        for profile_id, rows in profiles.items()
+        profile_id: aggregate_profile_layers(rows, (evap_layer_m, root_layer_m)) for profile_id, rows in profiles.items()
     }
     used_profiles = {int(value) for value in np.unique(soil_grid.values[mask])}
     absent_profiles = sorted(used_profiles - set(profile_layers))
@@ -241,21 +164,35 @@ def export_v2_workspace(
         _write_ascii(geodata / "slope.asc", np.where(mask, slope_grid.values, NODATA), **grid_kwargs)
         _write_ascii(geodata / "hydr_cond.asc", np.where(mask, hydrologic_condition, NODATA), integer=True, **grid_kwargs)
 
-        layer_maps = {name: [] for name in (
-            "Ksat_I", "Ksat_II", "N_I", "N_II", "ThetaI_FC", "ThetaII_FC",
-            "ThetaI_WP", "ThetaII_WP", "ThetaI_r", "ThetaII_r",
-            "ThetaI_sat", "ThetaII_sat",
-        )}
+        layer_maps = {
+            name: []
+            for name in (
+                "Ksat_I",
+                "Ksat_II",
+                "N_I",
+                "N_II",
+                "ThetaI_FC",
+                "ThetaII_FC",
+                "ThetaI_WP",
+                "ThetaII_WP",
+                "ThetaI_r",
+                "ThetaII_r",
+                "ThetaI_sat",
+                "ThetaII_sat",
+            )
+        }
         mapping = {
-            "Ksat": "ksat_mm_h", "N": "v2_brooks_corey_n", "Theta_FC": "theta_fc",
-            "Theta_WP": "theta_wp", "Theta_r": "theta_res", "Theta_sat": "theta_sat",
+            "Ksat": "ksat_mm_h",
+            "N": "v2_brooks_corey_n",
+            "Theta_FC": "theta_fc",
+            "Theta_WP": "theta_wp",
+            "Theta_r": "theta_res",
+            "Theta_sat": "theta_sat",
         }
         for layer_index, suffix in enumerate(("I", "II")):
             for stem, field in mapping.items():
                 name = f"{stem}_{suffix}" if stem in {"Ksat", "N"} else f"Theta{suffix}_{stem[6:]}"
-                layer_maps[name] = _profile_lookup_grid(
-                    soil_grid.values, mask, profile_layers, layer_index, field, np
-                )
+                layer_maps[name] = _profile_lookup_grid(soil_grid.values, mask, profile_layers, layer_index, field, np)
                 if field == "ksat_mm_h":
                     # IdrAgra v2 consumes Ksat in cm/h; canonical PTF output is mm/h.
                     layer_maps[name][mask] /= 10.0
@@ -265,21 +202,21 @@ def export_v2_workspace(
 
         if on_status:
             on_status("Writing v2 station series and inverse-distance weight grids.")
-        stations, start, end = _read_weather_stations(
-            required["weather"], soil_grid, elevation_grid, ogr, osr
-        )
+        stations, start, end = _read_weather_stations(required["weather"], soil_grid, elevation_grid, ogr, osr)
         for station in stations:
             _write_station_file(meteodata / station.filename, station, start, end)
         _write_station_list(staging / "weather_stations.dat", stations)
         weight_count = 2 if len(stations) == 1 else min(weather_neighbors, len(stations))
         weights = _weather_weight_grids(soil_grid, mask, stations, weight_count, np)
         for index, values in enumerate(weights, start=1):
-            _write_ascii(
-                geodata / f"meteo_{index}.asc", values, decimals=9, **grid_kwargs
-            )
+            _write_ascii(geodata / f"meteo_{index}.asc", values, decimals=9, **grid_kwargs)
 
         _write_landuses(
-            landuse_output, root, crops, landuses, active_ids,
+            landuse_output,
+            root,
+            crops,
+            landuses,
+            active_ids,
             Path(crop_parameter_folder).resolve() if crop_parameter_folder else None,
             warnings,
         )
@@ -295,12 +232,19 @@ def export_v2_workspace(
             "replace it with calibrated rice parameters before simulating rice."
         )
         _write_parameter_template(
-            staging / "idragra_parameters.txt", start, end, stations, weight_count,
-            active_ids, evap_layer_m, root_layer_m, profile_layers, np,
+            staging / "idragra_parameters.txt",
+            start,
+            end,
+            stations,
+            weight_count,
+            active_ids,
+            evap_layer_m,
+            root_layer_m,
+            profile_layers,
+            np,
         )
         (irrigation_output / "irrmethods.txt").write_text(
-            "# Parser stub for Mode 0; no operational irrigation methods.\n"
-            "IrrMethNum = 0\nList =\nEndList =\n",
+            "# Parser stub for Mode 0; no operational irrigation methods.\nIrrMethNum = 0\nList =\nEndList =\n",
             encoding="ascii",
         )
         (pheno_output / "README.txt").write_text(
@@ -309,8 +253,7 @@ def export_v2_workspace(
             encoding="ascii",
         )
         warnings.append(
-            "IdrAgra v2 phenology directories are not generated. Run CropCoef for "
-            "each exported station before starting IdrAgra."
+            "IdrAgra v2 phenology directories are not generated. Run CropCoef for each exported station before starting IdrAgra."
         )
         warnings.append(
             "This first contract is static land use, Mode 0 (rain-fed), and capillary "
@@ -334,7 +277,9 @@ def export_v2_workspace(
             "warnings": warnings,
         }
         (staging / "export_provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
-        (staging / "README_EXPORT.txt").write_text("IdrAgra v2 export\n\n" + "\n".join(f"- {item}" for item in warnings) + "\n", encoding="utf-8")
+        (staging / "README_EXPORT.txt").write_text(
+            "IdrAgra v2 export\n\n" + "\n".join(f"- {item}" for item in warnings) + "\n", encoding="utf-8"
+        )
         if destination.exists():
             _remove_tree(backup)
             destination.replace(backup)
@@ -354,14 +299,73 @@ def export_v2_workspace(
     else:
         manifest = Manifest(root)
         manifest.add_asset(
-            destination / "export_provenance.json", category="export", provider="idragather",
-            dataset="IdrAgra v2 static rain-fed export", request={
-                "destination": str(destination), "evap_layer_m": evap_layer_m,
-                "root_layer_m": root_layer_m, "weather_neighbors": weather_neighbors,
-                "hydrologic_condition": hydrologic_condition, "warnings": warnings,
+            destination / "export_provenance.json",
+            category="export",
+            provider="idragather",
+            dataset="IdrAgra v2 static rain-fed export",
+            request={
+                "destination": str(destination),
+                "evap_layer_m": evap_layer_m,
+                "root_layer_m": root_layer_m,
+                "weather_neighbors": weather_neighbors,
+                "hydrologic_condition": hydrologic_condition,
+                "warnings": warnings,
             },
         )
     return V2ExportResult(destination, len(files), len(stations), active_ids, start, end, tuple(warnings))
+
+
+# Collapse physical horizons into v2 layers using legacy IdrAgraTools rules.
+def aggregate_profile_layers(
+    horizons: Sequence[dict[str, float]], layer_thicknesses_m=(0.1, 0.9)
+) -> tuple[dict[str, float], ...]:
+    if not horizons:
+        raise ValueError("A soil profile has no hydraulic horizons.")
+    boundaries = [0.0]
+    for thickness in layer_thicknesses_m:
+        if not math.isfinite(thickness) or thickness <= 0:
+            raise ValueError("v2 soil layer thicknesses must be positive.")
+        boundaries.append(boundaries[-1] + float(thickness))
+    ordered = sorted(horizons, key=lambda row: row["top_cm"])
+    available_bottom = max(float(row["bottom_cm"]) / 100.0 for row in ordered)
+    if available_bottom + 1e-9 < boundaries[-1]:
+        raise ValueError(f"Soil profile ends at {available_bottom:g} m but v2 layers require {boundaries[-1]:g} m.")
+    result = []
+    for lower, upper in zip(boundaries, boundaries[1:]):
+        overlaps = []
+        for row in ordered:
+            top = float(row["top_cm"]) / 100.0
+            bottom = float(row["bottom_cm"]) / 100.0
+            overlap = max(0.0, min(bottom, upper) - max(top, lower))
+            if overlap:
+                overlaps.append((row, overlap))
+        if sum(weight for _row, weight in overlaps) < upper - lower - 1e-8:
+            raise ValueError(f"Soil horizons do not completely cover {lower:g}-{upper:g} m.")
+        layer = {}
+        total = sum(weight for _row, weight in overlaps)
+        for field in HYDRAULIC_FIELDS:
+            values = [(float(row[field]), weight) for row, weight in overlaps]
+            if any(not math.isfinite(value) for value, _weight in values):
+                raise ValueError(f"Non-finite soil hydraulic value in {field}.")
+            if field == "ksat_mm_h":
+                if any(value <= 0 for value, _weight in values):
+                    raise ValueError("Ksat must be positive for harmonic aggregation.")
+                layer[field] = total / sum(weight / value for value, weight in values)
+            else:
+                layer[field] = sum(value * weight for value, weight in values) / total
+        theta_r = layer["theta_res"]
+        theta_wp = layer["theta_wp"]
+        theta_fc = layer["theta_fc"]
+        theta_sat = layer["theta_sat"]
+        if not 0 <= theta_r < theta_wp < theta_fc < theta_sat <= 1:
+            raise ValueError("v2 water contents must satisfy 0 <= theta_res < theta_wp < theta_fc < theta_sat <= 1.")
+        ratio = (theta_fc - theta_r) / (theta_sat - theta_r)
+        if not 0 < ratio < 1:
+            raise ValueError("v2 N requires theta_res < theta_fc < theta_sat.")
+        # Legacy IdrAgraTools uses 0.2 mm/day as the reference conductivity.
+        layer["v2_brooks_corey_n"] = math.log((0.2 / 24.0) / layer["ksat_mm_h"]) / math.log(ratio)
+        result.append(layer)
+    return tuple(result)
 
 
 def _read_grid(path, gdal):
@@ -370,7 +374,12 @@ def _read_grid(path, gdal):
         raise ValueError(f"Could not open raster: {path}")
     band = dataset.GetRasterBand(1)
     nodata = band.GetNoDataValue()
-    result = _Grid(band.ReadAsArray(), tuple(dataset.GetGeoTransform()), dataset.GetProjectionRef(), float(nodata if nodata is not None else NODATA))
+    result = _Grid(
+        band.ReadAsArray(),
+        tuple(dataset.GetGeoTransform()),
+        dataset.GetProjectionRef(),
+        float(nodata if nodata is not None else NODATA),
+    )
     band = dataset = None
     return result
 
@@ -378,7 +387,11 @@ def _read_grid(path, gdal):
 def _validate_aligned(grids):
     first = grids[0]
     for grid in grids[1:]:
-        if grid.values.shape != first.values.shape or any(abs(a - b) > 1e-8 for a, b in zip(grid.geotransform, first.geotransform)) or grid.projection != first.projection:
+        if (
+            grid.values.shape != first.values.shape
+            or any(abs(a - b) > 1e-8 for a, b in zip(grid.geotransform, first.geotransform))
+            or grid.projection != first.projection
+        ):
             raise ValueError("Cell-builder rasters are not exactly aligned.")
     if abs(first.geotransform[1] + first.geotransform[5]) > 1e-8 or first.geotransform[2] or first.geotransform[4]:
         raise ValueError("IdrAgra v2 export requires north-up square grid cells.")
@@ -401,7 +414,10 @@ def _read_hydraulic_profiles(path, ogr):
     metadata = {}
     if metadata_layer is not None and metadata_layer.GetFeatureCount():
         feature = next(iter(metadata_layer))
-        metadata = {metadata_layer.GetLayerDefn().GetFieldDefn(i).GetName(): feature.GetField(i) for i in range(metadata_layer.GetLayerDefn().GetFieldCount())}
+        metadata = {
+            metadata_layer.GetLayerDefn().GetFieldDefn(i).GetName(): feature.GetField(i)
+            for i in range(metadata_layer.GetLayerDefn().GetFieldCount())
+        }
     database = None
     return profiles, metadata
 
@@ -434,11 +450,14 @@ def _read_weather_stations(path, grid, elevation, ogr, osr):
     if missing := sorted(required - fields):
         raise ValueError(f"Weather layer is missing field(s): {missing}")
     source_srs = layer.GetSpatialRef()
-    target_srs = osr.SpatialReference(); target_srs.ImportFromWkt(grid.projection)
-    wgs84 = osr.SpatialReference(); wgs84.ImportFromEPSG(4326)
+    target_srs = osr.SpatialReference()
+    target_srs.ImportFromWkt(grid.projection)
+    wgs84 = osr.SpatialReference()
+    wgs84.ImportFromEPSG(4326)
     axis = getattr(osr, "OAMS_TRADITIONAL_GIS_ORDER", None)
     for srs in (source_srs, target_srs, wgs84):
-        if srs is not None and axis is not None: srs.SetAxisMappingStrategy(axis)
+        if srs is not None and axis is not None:
+            srs.SetAxisMappingStrategy(axis)
     to_grid = osr.CoordinateTransformation(source_srs, target_srs)
     to_wgs = osr.CoordinateTransformation(source_srs, wgs84)
     grouped = {}
@@ -458,7 +477,8 @@ def _read_weather_stations(path, grid, elevation, ogr, osr):
         coordinates.setdefault(location, (geometry.GetX(), geometry.GetY()))
     if not grouped:
         raise ValueError("Normalized weather has no rows.")
-    starts = {min(rows) for rows in grouped.values()}; ends = {max(rows) for rows in grouped.values()}
+    starts = {min(rows) for rows in grouped.values()}
+    ends = {max(rows) for rows in grouped.values()}
     if len(starts) != 1 or len(ends) != 1:
         raise ValueError("All weather stations must have the same date coverage.")
     start, end = starts.pop(), ends.pop()
@@ -469,18 +489,33 @@ def _read_weather_stations(path, grid, elevation, ogr, osr):
         if len(rows) != expected_days or any(start.fromordinal(start.toordinal() + i) not in rows for i in range(expected_days)):
             raise ValueError(f"Weather station {location!r} is not a complete daily series.")
         x0, y0 = coordinates[location]
-        point = ogr.Geometry(ogr.wkbPoint); point.AddPoint_2D(x0, y0)
-        projected = point.Clone(); projected.Transform(to_grid)
-        geographic = point.Clone(); geographic.Transform(to_wgs)
+        point = ogr.Geometry(ogr.wkbPoint)
+        point.AddPoint_2D(x0, y0)
+        projected = point.Clone()
+        projected.Transform(to_grid)
+        geographic = point.Clone()
+        geographic.Transform(to_wgs)
         altitude = _sample_grid(elevation, projected.GetX(), projected.GetY())
-        stations.append(_Station(location, station_id, f"station_{station_id:03d}.dat", projected.GetX(), projected.GetY(), geographic.GetY(), altitude, tuple((day, rows[day]) for day in sorted(rows))))
+        stations.append(
+            _Station(
+                location,
+                station_id,
+                f"station_{station_id:03d}.dat",
+                projected.GetX(),
+                projected.GetY(),
+                geographic.GetY(),
+                altitude,
+                tuple((day, rows[day]) for day in sorted(rows)),
+            )
+        )
     database = None
     return tuple(stations), start, end
 
 
 def _sample_grid(grid, x, y):
     gt = grid.geotransform
-    column = int(math.floor((x - gt[0]) / gt[1])); row = int(math.floor((y - gt[3]) / gt[5]))
+    column = int(math.floor((x - gt[0]) / gt[1]))
+    row = int(math.floor((y - gt[3]) / gt[5]))
     if not (0 <= row < grid.values.shape[0] and 0 <= column < grid.values.shape[1]):
         return 0.0
     value = float(grid.values[row, column])
@@ -488,20 +523,25 @@ def _sample_grid(grid, x, y):
 
 
 def _weather_weight_grids(grid, mask, stations, count, np):
-    rows, columns = grid.values.shape; gt = grid.geotransform
+    rows, columns = grid.values.shape
+    gt = grid.geotransform
     result = [np.full((rows, columns), NODATA, dtype=float) for _ in range(count)]
     if len(stations) == 1:
         encoded = stations[0].station_id + 0.5
-        for values in result: values[mask] = encoded
+        for values in result:
+            values[mask] = encoded
         return result
     for row, column in zip(*np.where(mask)):
-        x = gt[0] + (column + 0.5) * gt[1]; y = gt[3] + (row + 0.5) * gt[5]
+        x = gt[0] + (column + 0.5) * gt[1]
+        y = gt[3] + (row + 0.5) * gt[5]
         nearest = sorted(stations, key=lambda item: ((item.x - x) ** 2 + (item.y - y) ** 2, item.station_id))[:count]
         distances = np.asarray([math.hypot(item.x - x, item.y - y) for item in nearest])
         if np.any(distances < 1e-10):
-            weights = np.full(count, 1e-6 / max(count - 1, 1)); weights[int(np.argmin(distances))] = 1.0 - weights.sum()
+            weights = np.full(count, 1e-6 / max(count - 1, 1))
+            weights[int(np.argmin(distances))] = 1.0 - weights.sum()
         else:
-            inverse = 1.0 / distances; weights = inverse / inverse.sum()
+            inverse = 1.0 / distances
+            weights = inverse / inverse.sum()
             if float(weights.max()) >= 0.9999999995:
                 winner = int(np.argmax(weights))
                 weights = np.full(count, 1e-9 / max(count - 1, 1))
@@ -513,17 +553,23 @@ def _weather_weight_grids(grid, mask, stations, count, np):
 
 def _write_ascii(path, values, *, geotransform, nodata, integer=False, decimals=6):
     rows, columns = values.shape
-    xll = geotransform[0]; yll = geotransform[3] + rows * geotransform[5]
+    xll = geotransform[0]
+    yll = geotransform[3] + rows * geotransform[5]
     with path.open("w", encoding="ascii", newline="\n") as stream:
-        stream.write(f"ncols {columns}\nnrows {rows}\nxllcorner {xll:.12g}\nyllcorner {yll:.12g}\ncellsize {geotransform[1]:.12g}\nNODATA_value {int(nodata)}\n")
+        stream.write(
+            f"ncols {columns}\nnrows {rows}\nxllcorner {xll:.12g}\nyllcorner {yll:.12g}\ncellsize {geotransform[1]:.12g}\nNODATA_value {int(nodata)}\n"
+        )
         for row in values:
             if integer:
                 stream.write(" ".join(str(int(round(value))) for value in row) + "\n")
             else:
-                stream.write(" ".join(
-                    str(int(nodata)) if value == nodata or not math.isfinite(float(value))
-                    else f"{float(value):.{decimals}f}" for value in row
-                ) + "\n")
+                stream.write(
+                    " ".join(
+                        str(int(nodata)) if value == nodata or not math.isfinite(float(value)) else f"{float(value):.{decimals}f}"
+                        for value in row
+                    )
+                    + "\n"
+                )
 
 
 def _write_station_file(path, station, start, end):
@@ -540,7 +586,8 @@ def _write_station_list(path, stations):
     with path.open("w", encoding="utf-8", newline="\n") as stream:
         stream.write("# Generated by IdrAgra Input Gatherer\n")
         stream.write(f"StatNum = {len(stations)}\nTable =\nFileName X Y\n")
-        for station in stations: stream.write(f"{station.filename} {station.x:.3f} {station.y:.3f}\n")
+        for station in stations:
+            stream.write(f"{station.filename} {station.x:.3f} {station.y:.3f}\n")
         stream.write("endTable\n")
 
 
@@ -549,12 +596,19 @@ def _write_landuses(output, root, crops, landuses, active_ids, explicit_folder, 
     with (output / "soil_uses.txt").open("w", encoding="utf-8", newline="\n") as stream:
         stream.write("Cr_ID\tCrop1\tCrop2\t# Comments\n")
         for item in sorted(landuses, key=lambda value: value.landuse_id):
-            if item.landuse_id not in active_ids: continue
+            if item.landuse_id not in active_ids:
+                continue
             crop1 = crop_by_id[item.crop1_id].parameter_file
             crop2 = crop_by_id[item.crop2_id].parameter_file if item.crop2_id else "*"
             stream.write(f"{item.landuse_id}\t{Path(crop1).name}\t{Path(crop2).name}\t# {item.name}\n")
         stream.write("endTable\n")
-    needed = {crop_by_id[crop_id].parameter_file for item in landuses if item.landuse_id in active_ids for crop_id in (item.crop1_id, item.crop2_id) if crop_id}
+    needed = {
+        crop_by_id[crop_id].parameter_file
+        for item in landuses
+        if item.landuse_id in active_ids
+        for crop_id in (item.crop1_id, item.crop2_id)
+        if crop_id
+    }
     search_folders = [folder for folder in (explicit_folder, root / "landuses", root / "cells") if folder]
     for reference in sorted(needed):
         source = Path(reference)
@@ -576,7 +630,8 @@ def _write_rice_file(path, values):
 
 
 def _write_parameter_template(path, start, end, stations, weight_count, active_ids, evap, root_layer, profile_layers, np):
-    first = np.asarray([layers[0]["ksat_mm_h"] for layers in profile_layers.values()]); second = np.asarray([layers[1]["ksat_mm_h"] for layers in profile_layers.values()])
+    first = np.asarray([layers[0]["ksat_mm_h"] for layers in profile_layers.values()])
+    second = np.asarray([layers[1]["ksat_mm_h"] for layers in profile_layers.values()])
     q1 = np.quantile(first, (0.1, 0.9)) / 10.0
     q2 = np.quantile(second, (0.1, 0.9)) / 10.0
     text = f"""# IdrAgra v2 static rain-fed template generated by IdrAgra Input Gatherer
@@ -600,7 +655,7 @@ SoilUseVarFlag = F
 MeteoStatTotNum = {len(stations)}
 MeteoStatWeightNum = {weight_count}
 SoilUsesNum = {max(active_ids)}
-SimulatedSoilUses = {' '.join(map(str, active_ids))}
+SimulatedSoilUses = {" ".join(map(str, active_ids))}
 RandSowDaysSym = symmetric
 RandSowDaysWind = 0
 Repeatable = T
@@ -629,9 +684,11 @@ DTxMinCard = 3
 def _sha256(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""): digest.update(chunk)
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
     return digest.hexdigest()
 
 
 def _remove_tree(path):
-    if path.exists(): shutil.rmtree(path)
+    if path.exists():
+        shutil.rmtree(path)

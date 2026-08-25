@@ -10,39 +10,6 @@ from .staging import CATEGORIES, StagingArea
 from .weather import validate_weather_csv, write_weather_template
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="idragather")
-    commands = parser.add_subparsers(dest="command", required=True)
-
-    plan = commands.add_parser("plan-era5", help="print ERA5-Land CDS jobs as JSON")
-    _add_spatiotemporal_arguments(plan)
-
-    download = commands.add_parser("fetch-era5", help="download raw ERA5-Land NetCDF")
-    download.add_argument("output", type=Path)
-    _add_spatiotemporal_arguments(download)
-    download.add_argument("--overwrite", action="store_true")
-
-    stage = commands.add_parser("stage-local", help="copy a user-provided raw file")
-    stage.add_argument("output", type=Path)
-    stage.add_argument("category", choices=CATEGORIES)
-    stage.add_argument("source", type=Path)
-    stage.add_argument("--source-name")
-    stage.add_argument("--overwrite", action="store_true")
-
-    template = commands.add_parser(
-        "weather-template", help="create an editable normalized daily-weather CSV"
-    )
-    template.add_argument("output", type=Path)
-    template.add_argument("--locations", nargs="+", required=True)
-    template.add_argument("--start", required=True)
-    template.add_argument("--end", required=True)
-
-    validate = commands.add_parser("validate-weather", help="validate normalized weather CSV")
-    validate.add_argument("input", type=Path)
-    validate.add_argument("--require-values", action="store_true")
-    return parser
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "plan-era5":
@@ -52,9 +19,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             json.dumps(
                 {
                     "dataset": DATASET,
-                    "jobs": [
-                        {"target": job.target_name, "request": job.request} for job in jobs
-                    ],
+                    "jobs": [{"target": job.target_name, "request": job.request} for job in jobs],
                 },
                 indent=2,
             )
@@ -95,6 +60,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"{issue.severity.upper()}: {position}: {issue.message}")
         return 1 if any(issue.severity == "error" for issue in issues) else 0
     raise AssertionError(args.command)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="idragather")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    plan = commands.add_parser("plan-era5", help="print ERA5-Land CDS jobs as JSON")
+    _add_spatiotemporal_arguments(plan)
+
+    download = commands.add_parser("fetch-era5", help="download raw ERA5-Land NetCDF")
+    download.add_argument("output", type=Path)
+    _add_spatiotemporal_arguments(download)
+    download.add_argument("--overwrite", action="store_true")
+
+    stage = commands.add_parser("stage-local", help="copy a user-provided raw file")
+    stage.add_argument("output", type=Path)
+    stage.add_argument("category", choices=CATEGORIES)
+    stage.add_argument("source", type=Path)
+    stage.add_argument("--source-name")
+    stage.add_argument("--overwrite", action="store_true")
+
+    template = commands.add_parser("weather-template", help="create an editable normalized daily-weather CSV")
+    template.add_argument("output", type=Path)
+    template.add_argument("--locations", nargs="+", required=True)
+    template.add_argument("--start", required=True)
+    template.add_argument("--end", required=True)
+
+    validate = commands.add_parser("validate-weather", help="validate normalized weather CSV")
+    validate.add_argument("input", type=Path)
+    validate.add_argument("--require-values", action="store_true")
+    return parser
 
 
 def _add_spatiotemporal_arguments(parser: argparse.ArgumentParser) -> None:

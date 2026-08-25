@@ -1,9 +1,8 @@
 from .models import BoundingBox
 
 
+# Return the EPSG:4326 AOI rectangle transformed into *target_srs*.
 def aoi_geometry(bbox: BoundingBox, target_srs, ogr, osr):
-    """Return the EPSG:4326 AOI rectangle transformed into *target_srs*."""
-
     source_srs = osr.SpatialReference()
     source_srs.ImportFromEPSG(4326)
     axis_strategy = getattr(osr, "OAMS_TRADITIONAL_GIS_ORDER", None)

@@ -42,4 +42,3 @@ class DateWindow:
 
     def as_dict(self) -> dict[str, str]:
         return {"start": self.start.isoformat(), "end": self.end.isoformat()}
-

@@ -46,6 +46,85 @@ class SoilNormalizationResult:
     filled_nodata_cells: int
 
 
+def normalize_soilgrids_files(
+    source_paths: Iterable[str | Path],
+    output_root: str | Path,
+    *,
+    bbox: BoundingBox | None = None,
+    max_classes: int = DEFAULT_MAX_CLASSES,
+    fill_nodata: bool = True,
+    on_status: Callable[[str], None] | None = None,
+) -> SoilNormalizationResult:
+    paths = tuple(Path(path).resolve() for path in source_paths)
+    if on_status is not None:
+        on_status(f"Reading {len(paths)} SoilGrids coverage(s).")
+    raw, masks, geotransform, projection = _read_rasters(paths)
+    normalized = normalize_soilgrids_arrays(
+        raw,
+        masks,
+        max_classes=max_classes,
+        fill_nodata=fill_nodata,
+    )
+    output = Path(output_root).resolve() / "soil" / OUTPUT_NAME
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if on_status is not None:
+        on_status(
+            f"Grouped {normalized.exact_profile_count} exact profile(s) into "
+            f"{len(normalized.profiles)} soil class(es); filled "
+            f"{normalized.filled_nodata_cells} NoData cell(s)."
+        )
+    polygon_count = _write_geopackage(output, normalized, geotransform, projection, bbox=bbox)
+
+    Manifest(Path(output_root)).add_asset(
+        output,
+        category="soil",
+        provider="idragather",
+        dataset="normalized ISRIC SoilGrids profiles",
+        source="; ".join(str(path) for path in paths),
+        request={
+            "depth_intervals_cm": [list(bounds) for bounds in DEPTH_BOUNDS],
+            "fields": list(normalized.fields),
+            "units": {
+                "sand_pct": "mass percent of fine earth",
+                "silt_pct": "mass percent of fine earth",
+                "clay_pct": "mass percent of fine earth",
+                "skel_pct": "volume percent coarse fragments",
+                "oc_pct": "mass percent organic carbon",
+                "bd_g_cm3": "g/cm3",
+            },
+            "texture_policy": "rescale sand+silt+clay to 100 percent per horizon",
+            "classification": {
+                "method": "deterministic cell-weighted k-means",
+                "maximum_classes": max_classes,
+                "exact_profile_count": normalized.exact_profile_count,
+                "output_class_count": len(normalized.profiles),
+                "similarity_scales": SIMILARITY_SCALES,
+            },
+            "missing_data_policy": (
+                "fill every NoData cell in the acquired AOI raster from the nearest valid soil class"
+                if fill_nodata
+                else "exclude cells incomplete in any property or horizon"
+            ),
+            "filled_nodata_cells": normalized.filled_nodata_cells,
+            "clip_aoi": bbox.as_dict() if bbox is not None else None,
+            "ptf_applied": False,
+        },
+    )
+    return SoilNormalizationResult(
+        output,
+        len(normalized.profiles),
+        polygon_count,
+        normalized.exact_profile_count,
+        normalized.filled_nodata_cells,
+    )
+
+
+# Convert SoilGrids maps into a bounded set of representative profiles.
+#
+# Texture fractions are closed to exactly 100 percent for every horizon.
+# Similarity is evaluated jointly over all horizons in parameter-scaled space.
+# Missing-data cells are assigned the nearest valid soil class so the output
+# covers the complete acquired AOI raster.
 def normalize_soilgrids_arrays(
     raw: Mapping[tuple[str, str], np.ndarray],
     valid_masks: Mapping[tuple[str, str], np.ndarray] | None = None,
@@ -53,14 +132,6 @@ def normalize_soilgrids_arrays(
     max_classes: int = DEFAULT_MAX_CLASSES,
     fill_nodata: bool = True,
 ) -> NormalizedSoilGrid:
-    """Convert SoilGrids maps into a bounded set of representative profiles.
-
-    Texture fractions are closed to exactly 100 percent for every horizon.
-    Similarity is evaluated jointly over all horizons in parameter-scaled space.
-    Missing-data cells are assigned the nearest valid soil class so the output
-    covers the complete acquired AOI raster.
-    """
-
     if isinstance(max_classes, bool) or int(max_classes) != max_classes:
         raise ValueError("maximum soil classes must be an integer")
     max_classes = int(max_classes)
@@ -68,11 +139,7 @@ def normalize_soilgrids_arrays(
         raise ValueError("maximum soil classes must be at least 1")
 
     expected = tuple((depth, name) for depth in DEPTHS for name in PROPERTIES)
-    missing = [
-        f"{name}_{depth}"
-        for depth, name in expected
-        if (depth, name) not in raw
-    ]
+    missing = [f"{name}_{depth}" for depth, name in expected if (depth, name) not in raw]
     if missing:
         raise ValueError(f"missing SoilGrids arrays: {', '.join(missing)}")
 
@@ -129,13 +196,9 @@ def normalize_soilgrids_arrays(
     flat_valid = valid.reshape(-1)
     if not np.any(flat_valid):
         raise ValueError("SoilGrids input has no cells complete across all six horizons")
-    exact_profiles, inverse = np.unique(
-        matrix[flat_valid], axis=0, return_inverse=True
-    )
+    exact_profiles, inverse = np.unique(matrix[flat_valid], axis=0, return_inverse=True)
     counts = np.bincount(inverse, minlength=len(exact_profiles))
-    profiles, exact_class_ids = _cluster_profiles(
-        exact_profiles, counts, max_classes
-    )
+    profiles, exact_class_ids = _cluster_profiles(exact_profiles, counts, max_classes)
     zones = np.zeros(matrix.shape[0], dtype=np.int32)
     zones[flat_valid] = exact_class_ids[inverse].astype(np.int32) + 1
     zones = zones.reshape(shape)
@@ -153,89 +216,12 @@ def normalize_soilgrids_arrays(
     )
 
 
-def normalize_soilgrids_files(
-    source_paths: Iterable[str | Path],
-    output_root: str | Path,
-    *,
-    bbox: BoundingBox | None = None,
-    max_classes: int = DEFAULT_MAX_CLASSES,
-    fill_nodata: bool = True,
-    on_status: Callable[[str], None] | None = None,
-) -> SoilNormalizationResult:
-    paths = tuple(Path(path).resolve() for path in source_paths)
-    if on_status is not None:
-        on_status(f"Reading {len(paths)} SoilGrids coverage(s).")
-    raw, masks, geotransform, projection = _read_rasters(paths)
-    normalized = normalize_soilgrids_arrays(
-        raw,
-        masks,
-        max_classes=max_classes,
-        fill_nodata=fill_nodata,
-    )
-    output = Path(output_root).resolve() / "soil" / OUTPUT_NAME
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if on_status is not None:
-        on_status(
-            f"Grouped {normalized.exact_profile_count} exact profile(s) into "
-            f"{len(normalized.profiles)} soil class(es); filled "
-            f"{normalized.filled_nodata_cells} NoData cell(s)."
-        )
-    polygon_count = _write_geopackage(
-        output, normalized, geotransform, projection, bbox=bbox
-    )
-
-    Manifest(Path(output_root)).add_asset(
-        output,
-        category="soil",
-        provider="idragather",
-        dataset="normalized ISRIC SoilGrids profiles",
-        source="; ".join(str(path) for path in paths),
-        request={
-            "depth_intervals_cm": [list(bounds) for bounds in DEPTH_BOUNDS],
-            "fields": list(normalized.fields),
-            "units": {
-                "sand_pct": "mass percent of fine earth",
-                "silt_pct": "mass percent of fine earth",
-                "clay_pct": "mass percent of fine earth",
-                "skel_pct": "volume percent coarse fragments",
-                "oc_pct": "mass percent organic carbon",
-                "bd_g_cm3": "g/cm3",
-            },
-            "texture_policy": "rescale sand+silt+clay to 100 percent per horizon",
-            "classification": {
-                "method": "deterministic cell-weighted k-means",
-                "maximum_classes": max_classes,
-                "exact_profile_count": normalized.exact_profile_count,
-                "output_class_count": len(normalized.profiles),
-                "similarity_scales": SIMILARITY_SCALES,
-            },
-            "missing_data_policy": (
-                "fill every NoData cell in the acquired AOI raster from the "
-                "nearest valid soil class"
-                if fill_nodata
-                else "exclude cells incomplete in any property or horizon"
-            ),
-            "filled_nodata_cells": normalized.filled_nodata_cells,
-            "clip_aoi": bbox.as_dict() if bbox is not None else None,
-            "ptf_applied": False,
-        },
-    )
-    return SoilNormalizationResult(
-        output,
-        len(normalized.profiles),
-        polygon_count,
-        normalized.exact_profile_count,
-        normalized.filled_nodata_cells,
-    )
-
-
+# Return representative profiles and a class index for every input row.
 def _cluster_profiles(
     profiles: np.ndarray,
     counts: np.ndarray,
     max_classes: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return representative profiles and a class index for every input row."""
-
     class_count = min(max_classes, len(profiles))
     if class_count == len(profiles):
         return profiles.copy(), np.arange(len(profiles), dtype=np.int32)
@@ -252,9 +238,7 @@ def _cluster_profiles(
     for index in range(1, class_count):
         candidate = int(np.argmax(nearest * counts))
         centers[index] = scaled[candidate]
-        nearest = np.minimum(
-            nearest, np.sum((scaled - centers[index]) ** 2, axis=1)
-        )
+        nearest = np.minimum(nearest, np.sum((scaled - centers[index]) ** 2, axis=1))
 
     labels = np.full(len(profiles), -1, dtype=np.int32)
     for _ in range(100):
@@ -277,16 +261,12 @@ def _cluster_profiles(
         labels = updated
         for index in range(class_count):
             members = labels == index
-            centers[index] = np.average(
-                scaled[members], axis=0, weights=counts[members]
-            )
+            centers[index] = np.average(scaled[members], axis=0, weights=counts[members])
 
     representatives = np.empty_like(centers)
     for index in range(class_count):
         members = labels == index
-        representatives[index] = np.average(
-            profiles[members], axis=0, weights=counts[members]
-        )
+        representatives[index] = np.average(profiles[members], axis=0, weights=counts[members])
     representatives = _round_representatives(representatives)
 
     # Stable IDs make reruns reproducible even if the iterative center order changes.
@@ -306,23 +286,16 @@ def _round_representatives(profiles: np.ndarray) -> np.ndarray:
         sand = fields.index(f"h{horizon}_sand_pct")
         silt = fields.index(f"h{horizon}_silt_pct")
         clay = fields.index(f"h{horizon}_clay_pct")
-        result[:, clay] = np.round(
-            100.0 - result[:, sand] - result[:, silt], ROUND_DECIMALS
-        )
+        result[:, clay] = np.round(100.0 - result[:, sand] - result[:, silt], ROUND_DECIMALS)
     return result
 
 
 def _profile_fields() -> tuple[str, ...]:
-    return tuple(
-        f"h{horizon}_{name}"
-        for horizon in range(1, len(DEPTHS) + 1)
-        for name in VALUE_NAMES
-    )
+    return tuple(f"h{horizon}_{name}" for horizon in range(1, len(DEPTHS) + 1) for name in VALUE_NAMES)
 
 
+# Fill every zero cell from the nearest four-connected soil class.
 def _fill_nodata_cells(zone_ids: np.ndarray) -> tuple[np.ndarray, int]:
-    """Fill every zero cell from the nearest four-connected soil class."""
-
     if zone_ids.ndim != 2:
         raise ValueError("soil class zones must be a two-dimensional raster")
     remaining = zone_ids == 0
@@ -333,18 +306,10 @@ def _fill_nodata_cells(zone_ids: np.ndarray) -> tuple[np.ndarray, int]:
     while np.any(remaining):
         sentinel = np.iinfo(np.int32).max
         candidates = np.full(zone_ids.shape, sentinel, dtype=np.int32)
-        candidates[1:] = np.minimum(
-            candidates[1:], np.where(filled[:-1] > 0, filled[:-1], sentinel)
-        )
-        candidates[:-1] = np.minimum(
-            candidates[:-1], np.where(filled[1:] > 0, filled[1:], sentinel)
-        )
-        candidates[:, 1:] = np.minimum(
-            candidates[:, 1:], np.where(filled[:, :-1] > 0, filled[:, :-1], sentinel)
-        )
-        candidates[:, :-1] = np.minimum(
-            candidates[:, :-1], np.where(filled[:, 1:] > 0, filled[:, 1:], sentinel)
-        )
+        candidates[1:] = np.minimum(candidates[1:], np.where(filled[:-1] > 0, filled[:-1], sentinel))
+        candidates[:-1] = np.minimum(candidates[:-1], np.where(filled[1:] > 0, filled[1:], sentinel))
+        candidates[:, 1:] = np.minimum(candidates[:, 1:], np.where(filled[:, :-1] > 0, filled[:, :-1], sentinel))
+        candidates[:, :-1] = np.minimum(candidates[:, :-1], np.where(filled[:, 1:] > 0, filled[:, 1:], sentinel))
         assign = remaining & (candidates != sentinel)
         if not np.any(assign):
             raise RuntimeError("could not propagate a soil class into an enclosed hole")
@@ -361,11 +326,7 @@ def _read_rasters(paths: tuple[Path, ...]):
 
     gdal.UseExceptions()
     by_name = {path.name: path for path in paths}
-    expected = {
-        f"{name}_{depth}_mean.tif": (depth, name)
-        for depth in DEPTHS
-        for name in PROPERTIES
-    }
+    expected = {f"{name}_{depth}_mean.tif": (depth, name) for depth in DEPTHS for name in PROPERTIES}
     missing = sorted(set(expected) - set(by_name))
     if missing:
         raise ValueError(f"missing SoilGrids files: {', '.join(missing)}")
@@ -397,10 +358,7 @@ def _read_rasters(paths: tuple[Path, ...]):
             or not np.allclose(transform, reference_transform, rtol=0.0, atol=1e-9)
             or projection != reference_projection
         ):
-            raise ValueError(
-                "SoilGrids raster is not aligned with the other coverages: "
-                f"{by_name[filename]}"
-            )
+            raise ValueError(f"SoilGrids raster is not aligned with the other coverages: {by_name[filename]}")
         band = dataset.GetRasterBand(1)
         array = np.asarray(band.ReadAsArray(), dtype=np.float64)
         mask = np.asarray(band.GetMaskBand().ReadAsArray(), dtype=bool)
@@ -461,9 +419,7 @@ def _write_geopackage(path, normalized, geotransform, projection, *, bbox=None):
     if gdal.Polygonize(zone_band, mask_band, layer, profile_index, []) != 0:
         raise RuntimeError("GDAL failed to polygonize normalized SoilGrids profiles")
 
-    clip_geometry = (
-        aoi_geometry(bbox, spatial_reference, ogr, osr) if bbox is not None else None
-    )
+    clip_geometry = aoi_geometry(bbox, spatial_reference, ogr, osr) if bbox is not None else None
     database.StartTransaction()
     polygon_count = 0
     try:
@@ -482,10 +438,7 @@ def _write_geopackage(path, normalized, geotransform, projection, *, bbox=None):
             if geometry_type == ogr.wkbPolygon:
                 polygon_parts = [geometry]
             elif geometry_type == ogr.wkbMultiPolygon:
-                polygon_parts = [
-                    geometry.GetGeometryRef(index).Clone()
-                    for index in range(geometry.GetGeometryCount())
-                ]
+                polygon_parts = [geometry.GetGeometryRef(index).Clone() for index in range(geometry.GetGeometryCount())]
             else:
                 raise RuntimeError("clipping produced a non-polygon soil geometry")
             profile_id = int(feature.GetField("profile_id"))
@@ -508,9 +461,7 @@ def _write_geopackage(path, normalized, geotransform, projection, *, bbox=None):
                 split_feature = None
                 polygon_count += 1
         database.CommitTransaction()
-        database.ExecuteSQL(
-            "CREATE INDEX IF NOT EXISTS soil_profiles_profile_id ON soil_profiles (profile_id)"
-        )
+        database.ExecuteSQL("CREATE INDEX IF NOT EXISTS soil_profiles_profile_id ON soil_profiles (profile_id)")
     except Exception:
         database.RollbackTransaction()
         raise
@@ -524,8 +475,7 @@ def _write_geopackage(path, normalized, geotransform, projection, *, bbox=None):
     except PermissionError as exc:
         temporary.unlink(missing_ok=True)
         raise RuntimeError(
-            "Could not replace the normalized soil GeoPackage because it is open in QGIS "
-            f"or another application: {path}"
+            f"Could not replace the normalized soil GeoPackage because it is open in QGIS or another application: {path}"
         ) from exc
     return polygon_count
 

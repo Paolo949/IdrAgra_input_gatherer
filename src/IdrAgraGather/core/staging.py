@@ -63,8 +63,7 @@ class StagingArea:
         if destination.exists() and not overwrite:
             if sha256_file(source_path) != sha256_file(destination):
                 raise FileExistsError(
-                    f"{destination} already exists with different contents; "
-                    "use --overwrite or rename the input"
+                    f"{destination} already exists with different contents; use --overwrite or rename the input"
                 )
         elif source_path != destination:
             shutil.copy2(source_path, destination)
@@ -78,9 +77,8 @@ class StagingArea:
         )
         return destination
 
+    # Write the requested area as a small EPSG:4326 GeoJSON layer.
     def write_aoi(self, bbox: BoundingBox) -> Path:
-        """Write the requested area as a small EPSG:4326 GeoJSON layer."""
-
         self.root.mkdir(parents=True, exist_ok=True)
         output = self.root / "aoi.geojson"
         ring = [

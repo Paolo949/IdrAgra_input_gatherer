@@ -12,7 +12,7 @@ OUTPUT_NAME = "landuse.shp"
 OUTPUT_LAYER = "landuse"
 CODE_FIELD = "Code_18"
 CATEGORY_FIELD = "landuse"
-NOMENCLATURE_URL = ("https://land.copernicus.eu/content/corine-land-cover-nomenclature-guidelines/html/")
+NOMENCLATURE_URL = "https://land.copernicus.eu/content/corine-land-cover-nomenclature-guidelines/html/"
 
 # Official level-three CORINE Land Cover nomenclature. During normalization, the numeric code is replaced with the descriptive string.
 CORINE_CATEGORIES = {
@@ -121,11 +121,7 @@ def normalize_corine_file(
 
     polygon_count = 0
     categories: set[str] = set()
-    clip_geometry = (
-        aoi_geometry(bbox, source_layer.GetSpatialRef(), ogr, osr)
-        if bbox is not None
-        else None
-    )
+    clip_geometry = aoi_geometry(bbox, source_layer.GetSpatialRef(), ogr, osr) if bbox is not None else None
     try:
         with TemporaryDirectory(prefix=".landuse-", dir=output.parent) as temporary:
             temporary_output = Path(temporary) / OUTPUT_NAME
@@ -156,9 +152,7 @@ def normalize_corine_file(
                 category = corine_category(source_feature.GetField(code_index))
                 geometry = source_feature.GetGeometryRef()
                 if geometry is None or geometry.IsEmpty():
-                    raise ValueError(
-                        f"CORINE feature {source_feature.GetFID()} has no polygon geometry"
-                    )
+                    raise ValueError(f"CORINE feature {source_feature.GetFID()} has no polygon geometry")
                 geometry = geometry.Clone()
                 if clip_geometry is not None:
                     geometry = geometry.Intersection(clip_geometry)
@@ -170,17 +164,13 @@ def normalize_corine_file(
                 elif geometry_type != ogr.wkbMultiPolygon:
                     if clip_geometry is not None:
                         continue
-                    raise ValueError(
-                        f"CORINE feature {source_feature.GetFID()} is not a polygon"
-                    )
+                    raise ValueError(f"CORINE feature {source_feature.GetFID()} is not a polygon")
 
                 feature = ogr.Feature(output_definition)
                 feature.SetField(CATEGORY_FIELD, category)
                 feature.SetGeometry(geometry)
                 if layer.CreateFeature(feature) != 0:
-                    raise RuntimeError(
-                        f"failed to write CORINE feature {source_feature.GetFID()}"
-                    )
+                    raise RuntimeError(f"failed to write CORINE feature {source_feature.GetFID()}")
                 feature = None
                 polygon_count += 1
                 categories.add(category)
@@ -214,10 +204,9 @@ def normalize_corine_file(
         },
     )
     if on_status is not None:
-        on_status(
-            f"Wrote {polygon_count} polygon(s) in {len(categories)} land-use category(ies)."
-        )
+        on_status(f"Wrote {polygon_count} polygon(s) in {len(categories)} land-use category(ies).")
     return CorineNormalizationResult(output, polygon_count, len(categories))
+
 
 # Look in the CORINE_CATEGORIES dictionary for a specific code and return the corresponding category string
 def corine_category(code: object) -> str:
@@ -266,8 +255,7 @@ def _replace_shapefile(temporary: Path, target: Path) -> None:
             if backup.exists():
                 backup.replace(old)
         raise RuntimeError(
-            "Could not replace the normalized land-use shapefile because it is open "
-            f"in QGIS or another application: {target}"
+            f"Could not replace the normalized land-use shapefile because it is open in QGIS or another application: {target}"
         ) from exc
     except Exception:
         for installed in installed_new:

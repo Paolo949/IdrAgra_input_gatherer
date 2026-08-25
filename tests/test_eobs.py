@@ -4,11 +4,18 @@ import tempfile
 import unittest
 
 from IdrAgraGather.core.models import BoundingBox, DateWindow
-from IdrAgraGather.core.providers.eobs import VARIABLES, fetch, plan_jobs
+from IdrAgraGather.core.providers.eobs import VARIABLES, _buffered_grid_bounds, fetch, plan_jobs
 from IdrAgraGather.core.staging import find_staged_files
 
 
 class EobsProviderTests(unittest.TestCase):
+    def test_remote_subset_includes_one_grid_cell_around_the_aoi(self):
+        bounds = _buffered_grid_bounds(BoundingBox(9.376, 46.143, 9.437, 46.176))
+        self.assertEqual(bounds, (9.3, 46.1, 9.5, 46.2))
+
+        aligned_bounds = _buffered_grid_bounds(BoundingBox(9.3, 46.1, 9.5, 46.2))
+        self.assertEqual(aligned_bounds, (9.2, 46.0, 9.6, 46.3))
+
     def test_jobs_are_one_file_per_variable_and_intersecting_period(self):
         jobs = plan_jobs(
             BoundingBox(9.3, 46.1, 9.5, 46.2),
@@ -53,6 +60,8 @@ class EobsProviderTests(unittest.TestCase):
             manifest = (Path(temporary) / "manifest.json").read_text(encoding="utf-8")
             self.assertIn('"provider": "eobs-knmi"', manifest)
             self.assertIn('"requested_bbox"', manifest)
+            self.assertIn('"spatial_buffer_grid_cells": 1', manifest)
+            self.assertIn('"subset_bbox"', manifest)
 
     def test_staged_files_are_found_from_the_manifest(self):
         def subsetter(_job, target, _bbox, _window, _is_cancelled):

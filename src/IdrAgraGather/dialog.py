@@ -1,11 +1,28 @@
 from pathlib import Path
 
-from qgis.PyQt.QtCore import QDate, Qt, pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtCore import QDate, Qt, pyqtSignal  # pyright: ignore[reportAttributeAccessIssue]
 from qgis.PyQt.QtWidgets import (  # pyright: ignore[reportAttributeAccessIssue]
-    QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog,
-    QFormLayout, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget,
-    QTabWidget, QVBoxLayout, QWidget,
+    QCheckBox,
+    QComboBox,
+    QDateEdit,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QStackedWidget,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 
@@ -42,12 +59,6 @@ class FilePicker(QWidget):
         layout.addWidget(self.line_edit, 1)
         layout.addWidget(self.button)
 
-    def path(self):
-        return self.line_edit.text().strip()
-
-    def set_path(self, path):
-        self.line_edit.setText(str(path or ""))
-
     def _browse(self):
         filename, _ = QFileDialog.getOpenFileName(
             self,
@@ -58,6 +69,12 @@ class FilePicker(QWidget):
         if filename:
             self.set_path(filename)
 
+    def path(self):
+        return self.line_edit.text().strip()
+
+    def set_path(self, path):
+        self.line_edit.setText(str(path or ""))
+
 
 class AcquisitionDialog(QDialog):
     drawRequested = pyqtSignal()
@@ -65,7 +82,7 @@ class AcquisitionDialog(QDialog):
     runRequested = pyqtSignal(str)
 
     def __init__(self, parent=None):
-        super().__init__(parent) # inherits the parent's window behaviour if specified
+        super().__init__(parent)  # inherits the parent's window behaviour if specified
 
         # Creates the dialog window
         self._bbox = None
@@ -80,7 +97,7 @@ class AcquisitionDialog(QDialog):
             "Acquire raw input data (weather, soil, landuse, topography) and transform it into reviewable IdrAgra-like datasets. "
             "Supports both local files and online sources accessible through web APIs."
         )
-        intro.setWordWrap(True) # allows the intro text to wrap over multiple lines
+        intro.setWordWrap(True)  # allows the intro text to wrap over multiple lines
         layout.addWidget(intro)
 
         # The workspace and AOI apply to every data category, so they remain
@@ -90,18 +107,10 @@ class AcquisitionDialog(QDialog):
 
         self.category_tabs = QTabWidget()
         self.category_tabs.setDocumentMode(True)
-        self.category_tabs.addTab(
-            self._scrollable_page(self._build_weather_group()), "Weather"
-        )
-        self.category_tabs.addTab(
-            self._scrollable_page(self._build_soil_group()), "Soil"
-        )
-        self.category_tabs.addTab(
-            self._scrollable_page(self._build_landuse_group()), "Land use"
-        )
-        self.category_tabs.addTab(
-            self._scrollable_page(self._build_topography_group()), "Topography"
-        )
+        self.category_tabs.addTab(self._scrollable_page(self._build_weather_group()), "Weather")
+        self.category_tabs.addTab(self._scrollable_page(self._build_soil_group()), "Soil")
+        self.category_tabs.addTab(self._scrollable_page(self._build_landuse_group()), "Land use")
+        self.category_tabs.addTab(self._scrollable_page(self._build_topography_group()), "Topography")
         layout.addWidget(self.category_tabs, 1)
 
         # Creates the log area at the bottom of the dialog
@@ -121,18 +130,16 @@ class AcquisitionDialog(QDialog):
         self.weather_source_selector.currentIndexChanged.connect(self._update_weather_file_state)
         self.soil_source_selector.currentIndexChanged.connect(self._update_soil_file_state)
         self.landuse_source_selector.currentIndexChanged.connect(self._update_landuse_file_state)
-        self.topography_source_selector.currentIndexChanged.connect(
-            self._update_topography_file_state
-        )
+        self.topography_source_selector.currentIndexChanged.connect(self._update_topography_file_state)
         self.output_folder.editingFinished.connect(self.refresh_status)
         self._update_weather_file_state()
         self._update_soil_file_state()
         self._update_landuse_file_state()
         self._update_topography_file_state()
 
+    # Wrap one category in a page that can grow independently.
     @staticmethod
     def _scrollable_page(content):
-        """Wrap one category in a page that can grow independently."""
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(FRAME_SHAPE.NoFrame)
@@ -171,6 +178,7 @@ class AcquisitionDialog(QDialog):
         self.weather_source_selector.addItem("ERA5-Land", WEATHER_SOURCE_ERA5)
         self.weather_source_selector.addItem("E-OBS", WEATHER_SOURCE_EOBS)
         self.weather_source_selector.addItem("Local file", WEATHER_SOURCE_LOCAL)
+        self.weather_source_selector.setCurrentIndex(self.weather_source_selector.findData(WEATHER_SOURCE_EOBS))
         self.weather_file = FilePicker("Weather data (*.nc *.csv *.txt);;All files (*.*)")
         today = QDate.currentDate()
         self.start_date = QDateEdit(QDate(today.year(), 1, 1))
@@ -199,12 +207,8 @@ class AcquisitionDialog(QDialog):
         )
         eobs_note.setWordWrap(True)
         eobs_layout.addWidget(eobs_note)
-        self.eobs_terms = QCheckBox(
-            "I confirm this use is non-commercial research or non-commercial education."
-        )
-        self.eobs_terms.setToolTip(
-            "Required by the ECA&D/E-OBS data policy before downloading E-OBS data."
-        )
+        self.eobs_terms = QCheckBox("I confirm this use is non-commercial research or non-commercial education.")
+        self.eobs_terms.setToolTip("Required by the ECA&D/E-OBS data policy before downloading E-OBS data.")
         eobs_layout.addWidget(self.eobs_terms)
         local_page = QWidget()
         local_layout = QFormLayout(local_page)
@@ -291,17 +295,11 @@ class AcquisitionDialog(QDialog):
         self.landuse_status = QLabel("Raw: not found\nNormalized: not found")
         self.landuse_status.setStyleSheet("font-weight: bold;")
         self.landuse_status.setWordWrap(True)
-        self.landuse_status.setTextInteractionFlags(
-            TEXT_INTERACTION_FLAG.TextSelectableByMouse
-        )
+        self.landuse_status.setTextInteractionFlags(TEXT_INTERACTION_FLAG.TextSelectableByMouse)
         self.landuse_source_selector = QComboBox()
-        self.landuse_source_selector.addItem(
-            "CORINE Land Cover 2018", LANDUSE_SOURCE_CORINE
-        )
+        self.landuse_source_selector.addItem("CORINE Land Cover 2018", LANDUSE_SOURCE_CORINE)
         self.landuse_source_selector.addItem("Local file", LANDUSE_SOURCE_LOCAL)
-        self.landuse_file = FilePicker(
-            "Land-use data (*.gpkg *.shp *.tif *.tiff);;All files (*.*)"
-        )
+        self.landuse_file = FilePicker("Land-use data (*.gpkg *.shp *.tif *.tiff);;All files (*.*)")
         self.landuse_options = QStackedWidget()
         corine_page = QWidget()
         corine_layout = QVBoxLayout(corine_page)
@@ -339,17 +337,11 @@ class AcquisitionDialog(QDialog):
         self.topography_status = QLabel("Raw: not found\nNormalized: not found")
         self.topography_status.setStyleSheet("font-weight: bold;")
         self.topography_status.setWordWrap(True)
-        self.topography_status.setTextInteractionFlags(
-            TEXT_INTERACTION_FLAG.TextSelectableByMouse
-        )
+        self.topography_status.setTextInteractionFlags(TEXT_INTERACTION_FLAG.TextSelectableByMouse)
         self.topography_source_selector = QComboBox()
-        self.topography_source_selector.addItem(
-            "Copernicus DEM", TOPOGRAPHY_SOURCE_COPERNICUS
-        )
+        self.topography_source_selector.addItem("Copernicus DEM", TOPOGRAPHY_SOURCE_COPERNICUS)
         self.topography_source_selector.addItem("Local DEM", TOPOGRAPHY_SOURCE_LOCAL)
-        self.topography_file = FilePicker(
-            "Elevation data (*.tif *.tiff *.vrt);;All files (*.*)"
-        )
+        self.topography_file = FilePicker("Elevation data (*.tif *.tiff *.vrt);;All files (*.*)")
 
         self.topography_options = QStackedWidget()
         copernicus_page = QWidget()
@@ -382,15 +374,9 @@ class AcquisitionDialog(QDialog):
         self.topography_acquire_button = QPushButton("Acquire raw")
         self.topography_transform_button = QPushButton("Transform existing")
         self.topography_both_button = QPushButton("Acquire + transform")
-        self.topography_acquire_button.clicked.connect(
-            lambda: self.runRequested.emit("topography-acquire")
-        )
-        self.topography_transform_button.clicked.connect(
-            lambda: self.runRequested.emit("topography-transform")
-        )
-        self.topography_both_button.clicked.connect(
-            lambda: self.runRequested.emit("topography-both")
-        )
+        self.topography_acquire_button.clicked.connect(lambda: self.runRequested.emit("topography-acquire"))
+        self.topography_transform_button.clicked.connect(lambda: self.runRequested.emit("topography-transform"))
+        self.topography_both_button.clicked.connect(lambda: self.runRequested.emit("topography-both"))
         layout.addWidget(QLabel("Status"), 0, 0)
         layout.addWidget(self.topography_status, 0, 1, 1, 3)
         layout.addWidget(QLabel("Source"), 1, 0)
@@ -399,10 +385,7 @@ class AcquisitionDialog(QDialog):
         layout.addWidget(self.topography_acquire_button, 3, 1)
         layout.addWidget(self.topography_transform_button, 3, 2)
         layout.addWidget(self.topography_both_button, 3, 3)
-        note = QLabel(
-            "Transform creates two aligned metric rasters: elevation above mean sea "
-            "level (m) and terrain slope (%)."
-        )
+        note = QLabel("Transform creates two aligned metric rasters: elevation above mean sea level (m) and terrain slope (%).")
         note.setWordWrap(True)
         layout.addWidget(note, 4, 1, 1, 3)
         return group
@@ -430,9 +413,7 @@ class AcquisitionDialog(QDialog):
 
     def set_bbox(self, west, south, east, north):
         self._bbox = [float(west), float(south), float(east), float(north)]
-        self.aoi_text.setText(
-            f"{west:.6f}, {south:.6f}, {east:.6f}, {north:.6f}"
-        )
+        self.aoi_text.setText(f"{west:.6f}, {south:.6f}, {east:.6f}, {north:.6f}")
 
     def set_output_folder(self, path):
         if path:
@@ -456,9 +437,7 @@ class AcquisitionDialog(QDialog):
                 WEATHER_SOURCE_ERA5: "era5-download",
                 WEATHER_SOURCE_EOBS: "eobs-download",
             }.get(selected_weather, selected_weather)
-        elif action == "weather-transform" and selected_weather in {
-            WEATHER_SOURCE_ERA5, WEATHER_SOURCE_EOBS
-        }:
+        elif action == "weather-transform" and selected_weather in {WEATHER_SOURCE_ERA5, WEATHER_SOURCE_EOBS}:
             weather_source = f"{selected_weather}-normalize"
             normalize_weather = True
         elif action == "weather-both":
@@ -466,13 +445,9 @@ class AcquisitionDialog(QDialog):
                 WEATHER_SOURCE_ERA5: "era5-download",
                 WEATHER_SOURCE_EOBS: "eobs-download",
             }.get(selected_weather, selected_weather)
-            normalize_weather = selected_weather in {
-                WEATHER_SOURCE_ERA5, WEATHER_SOURCE_EOBS
-            }
+            normalize_weather = selected_weather in {WEATHER_SOURCE_ERA5, WEATHER_SOURCE_EOBS}
         if weather_source == "eobs-download" and not self.eobs_terms.isChecked():
-            raise ValueError(
-                "Confirm the non-commercial E-OBS terms before downloading this dataset."
-            )
+            raise ValueError("Confirm the non-commercial E-OBS terms before downloading this dataset.")
         if weather_source == WEATHER_SOURCE_LOCAL and not self.weather_file.path():
             raise ValueError("Choose a local weather file or another weather source.")
         selected_soil = self.soil_source_selector.currentData()
@@ -483,44 +458,23 @@ class AcquisitionDialog(QDialog):
         if soil_source == SOIL_SOURCE_LOCAL and not self.soil_file.path():
             raise ValueError("Choose a local soil file or another soil source.")
         selected_landuse = self.landuse_source_selector.currentData()
-        landuse_source = (
-            selected_landuse
-            if action in {"landuse-acquire", "landuse-both"}
-            else None
-        )
+        landuse_source = selected_landuse if action in {"landuse-acquire", "landuse-both"} else None
         normalize_landuse = action in {"landuse-transform", "landuse-both"}
         if normalize_landuse and selected_landuse != LANDUSE_SOURCE_CORINE:
             raise ValueError("Automatic land-use normalization currently supports CORINE only.")
         if landuse_source == LANDUSE_SOURCE_LOCAL and not self.landuse_file.path():
             raise ValueError("Choose a local land-use file or select CORINE.")
         selected_topography = self.topography_source_selector.currentData()
-        topography_source = (
-            selected_topography
-            if action in {"topography-acquire", "topography-both"}
-            else None
-        )
+        topography_source = selected_topography if action in {"topography-acquire", "topography-both"} else None
         normalize_topography = action in {"topography-transform", "topography-both"}
         if normalize_topography and selected_topography != TOPOGRAPHY_SOURCE_COPERNICUS:
-            raise ValueError(
-                "Automatic topography normalization currently supports Copernicus DEM only."
-            )
-        if (
-            topography_source == TOPOGRAPHY_SOURCE_LOCAL
-            and not self.topography_file.path()
-        ):
+            raise ValueError("Automatic topography normalization currently supports Copernicus DEM only.")
+        if topography_source == TOPOGRAPHY_SOURCE_LOCAL and not self.topography_file.path():
             raise ValueError("Choose a local DEM file or select Copernicus DEM.")
         local_files = {
             "soil": self.soil_file.path() if soil_source == SOIL_SOURCE_LOCAL else "",
-            "landuse": (
-                self.landuse_file.path()
-                if landuse_source == LANDUSE_SOURCE_LOCAL
-                else ""
-            ),
-            "topography": (
-                self.topography_file.path()
-                if topography_source == TOPOGRAPHY_SOURCE_LOCAL
-                else ""
-            ),
+            "landuse": (self.landuse_file.path() if landuse_source == LANDUSE_SOURCE_LOCAL else ""),
+            "topography": (self.topography_file.path() if topography_source == TOPOGRAPHY_SOURCE_LOCAL else ""),
         }
         if weather_source == WEATHER_SOURCE_LOCAL:
             local_files["weather"] = self.weather_file.path()
@@ -543,9 +497,7 @@ class AcquisitionDialog(QDialog):
             "topography_source": topography_source,
             "normalize_topography": normalize_topography,
             "dem_instance": self.dem_instance.currentData(),
-            "topography_resolution_m": (
-                30 if self.dem_instance.currentData() == "COPERNICUS_30" else 90
-            ),
+            "topography_resolution_m": (30 if self.dem_instance.currentData() == "COPERNICUS_30" else 90),
             "copernicus_client_id": self.copernicus_client_id.text().strip(),
             "copernicus_client_secret": self.copernicus_client_secret.text(),
             "local_files": local_files,
@@ -619,9 +571,7 @@ class AcquisitionDialog(QDialog):
 
     def _update_landuse_file_state(self):
         source = self.landuse_source_selector.currentData()
-        self.landuse_options.setCurrentIndex(
-            self.landuse_source_selector.currentIndex()
-        )
+        self.landuse_options.setCurrentIndex(self.landuse_source_selector.currentIndex())
         self.landuse_acquire_button.setEnabled(source in {LANDUSE_SOURCE_CORINE, LANDUSE_SOURCE_LOCAL})
         can_normalize = source == LANDUSE_SOURCE_CORINE
         self.landuse_transform_button.setEnabled(can_normalize)
@@ -630,13 +580,9 @@ class AcquisitionDialog(QDialog):
 
     def _update_topography_file_state(self):
         source = self.topography_source_selector.currentData()
-        self.topography_options.setCurrentIndex(
-            self.topography_source_selector.currentIndex()
-        )
+        self.topography_options.setCurrentIndex(self.topography_source_selector.currentIndex())
         is_copernicus = source == TOPOGRAPHY_SOURCE_COPERNICUS
-        self.topography_acquire_button.setEnabled(
-            source in {TOPOGRAPHY_SOURCE_COPERNICUS, TOPOGRAPHY_SOURCE_LOCAL}
-        )
+        self.topography_acquire_button.setEnabled(source in {TOPOGRAPHY_SOURCE_COPERNICUS, TOPOGRAPHY_SOURCE_LOCAL})
         self.topography_transform_button.setEnabled(is_copernicus)
         self.topography_both_button.setEnabled(is_copernicus)
         self.refresh_status()
@@ -680,9 +626,7 @@ class AcquisitionDialog(QDialog):
             raw_soil_text = f"Raw: not found in {soil_raw}"
         normalized_soil = root / "soil" / "soil_profiles.gpkg"
         normalized_soil_text = (
-            f"Normalized: {normalized_soil}"
-            if normalized_soil.is_file()
-            else f"Normalized: not found at {normalized_soil}"
+            f"Normalized: {normalized_soil}" if normalized_soil.is_file() else f"Normalized: not found at {normalized_soil}"
         )
         self.soil_status.setText(raw_soil_text + "\n" + normalized_soil_text)
 
@@ -691,11 +635,7 @@ class AcquisitionDialog(QDialog):
             LANDUSE_SOURCE_LOCAL: "local",
         }[self.landuse_source_selector.currentData()]
         landuse_raw = root / "raw" / "landuse" / landuse_provider
-        landuse_files = (
-            [path for path in landuse_raw.iterdir() if path.is_file()]
-            if landuse_raw.is_dir()
-            else []
-        )
+        landuse_files = [path for path in landuse_raw.iterdir() if path.is_file()] if landuse_raw.is_dir() else []
         if len(landuse_files) == 1:
             raw_landuse_text = f"Raw: {landuse_files[0]}"
         elif landuse_files:
@@ -711,18 +651,14 @@ class AcquisitionDialog(QDialog):
         self.landuse_status.setText(raw_landuse_text + "\n" + normalized_landuse_text)
 
         topography_provider = (
-            "copernicus_dem"
-            if self.topography_source_selector.currentData()
-            == TOPOGRAPHY_SOURCE_COPERNICUS
-            else "local"
+            "copernicus_dem" if self.topography_source_selector.currentData() == TOPOGRAPHY_SOURCE_COPERNICUS else "local"
         )
         topography_raw = root / "raw" / "topography" / topography_provider
         topography_files = (
             [
                 path
                 for path in topography_raw.rglob("*")
-                if path.is_file()
-                and path.suffix.lower() in {".tif", ".tiff", ".vrt", ".asc"}
+                if path.is_file() and path.suffix.lower() in {".tif", ".tiff", ".vrt", ".asc"}
             ]
             if topography_raw.is_dir()
             else []
@@ -730,9 +666,7 @@ class AcquisitionDialog(QDialog):
         if len(topography_files) == 1:
             raw_topography_text = f"Raw: {topography_files[0]}"
         elif topography_files:
-            raw_topography_text = (
-                f"Raw: {len(topography_files)} files in {topography_raw}"
-            )
+            raw_topography_text = f"Raw: {len(topography_files)} files in {topography_raw}"
         else:
             raw_topography_text = f"Raw: not found in {topography_raw}"
         elevation = root / "topography" / "elevation_m_asl.tif"
@@ -740,9 +674,5 @@ class AcquisitionDialog(QDialog):
         if elevation.is_file() and slope.is_file():
             normalized_topography_text = f"Normalized: {elevation} and {slope}"
         else:
-            normalized_topography_text = (
-                f"Normalized: not found at {elevation.parent}"
-            )
-        self.topography_status.setText(
-            raw_topography_text + "\n" + normalized_topography_text
-        )
+            normalized_topography_text = f"Normalized: not found at {elevation.parent}"
+        self.topography_status.setText(raw_topography_text + "\n" + normalized_topography_text)

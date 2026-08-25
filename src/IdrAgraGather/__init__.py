@@ -5,4 +5,3 @@ def classFactory(iface):
     from .plugin import IdrAgraGatherPlugin
 
     return IdrAgraGatherPlugin(iface)
-

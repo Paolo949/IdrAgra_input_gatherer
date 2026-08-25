@@ -49,6 +49,7 @@ class NormalizationResult:
     day_count: int
 
 
+# Convert raw ERA5-Land NetCDF files to a daily IdrAgra-ready GeoPackage.
 def normalize_era5_files(
     source_paths: Iterable[str | Path],
     output_root: str | Path,
@@ -57,8 +58,6 @@ def normalize_era5_files(
     timezone_name: str = "Europe/Rome",
     on_status: Callable[[str], None] | None = None,
 ) -> NormalizationResult:
-    """Convert raw ERA5-Land NetCDF files to a daily IdrAgra-ready GeoPackage."""
-
     paths = tuple(Path(path).resolve() for path in source_paths)
     if not paths:
         raise ValueError("at least one ERA5-Land NetCDF file is required")
@@ -70,10 +69,7 @@ def normalize_era5_files(
     output = Path(output_root).resolve() / "weather" / "weather_daily_points.gpkg"
     output.parent.mkdir(parents=True, exist_ok=True)
     if on_status is not None:
-        on_status(
-            f"Writing {len(daily)} daily rows for each of "
-            f"{cube.latitudes.size * cube.longitudes.size} grid points."
-        )
+        on_status(f"Writing {len(daily)} daily rows for each of {cube.latitudes.size * cube.longitudes.size} grid points.")
     write_daily_geopackage(output, cube.latitudes, cube.longitudes, daily)
 
     Manifest(Path(output_root)).add_asset(
@@ -97,14 +93,13 @@ def normalize_era5_files(
     )
 
 
+# Aggregate a validated hourly cube into the seven IdrAgra daily fields.
 def aggregate_daily(
     cube: Era5Cube,
     window: DateWindow,
     *,
     timezone_name: str = "Europe/Rome",
 ) -> tuple[list[DailySlice], list[str]]:
-    """Aggregate a validated hourly cube into the seven IdrAgra daily fields."""
-
     _validate_cube(cube)
     zone = ZoneInfo(timezone_name)
     order = np.argsort(np.array([item.timestamp() for item in cube.times]))
@@ -130,9 +125,7 @@ def aggregate_daily(
     current_day = window.start
     while current_day <= window.end:
         instant_hours, accumulation_hours = _daily_utc_hours(current_day, zone)
-        instant_indices = _indices_with_edge_fill(
-            instant_hours, times, time_index, current_day, "instantaneous", warnings
-        )
+        instant_indices = _indices_with_edge_fill(instant_hours, times, time_index, current_day, "instantaneous", warnings)
         accumulation_indices = _indices_with_edge_fill(
             accumulation_hours, times, time_index, current_day, "accumulated", warnings
         )
@@ -156,9 +149,8 @@ def aggregate_daily(
     return result, list(dict.fromkeys(warnings))
 
 
+# Read CDS NetCDF-4 files through GDAL's multidimensional API.
 def read_era5_cube(paths: Iterable[Path]) -> Era5Cube:
-    """Read CDS NetCDF-4 files through GDAL's multidimensional API."""
-
     try:
         from osgeo import gdal
     except ImportError as exc:
@@ -168,15 +160,10 @@ def read_era5_cube(paths: Iterable[Path]) -> Era5Cube:
     pieces: list[Era5Cube] = [_read_era5_file(path, gdal) for path in paths]
     first = pieces[0]
     for piece in pieces[1:]:
-        if not np.array_equal(piece.latitudes, first.latitudes) or not np.array_equal(
-            piece.longitudes, first.longitudes
-        ):
+        if not np.array_equal(piece.latitudes, first.latitudes) or not np.array_equal(piece.longitudes, first.longitudes):
             raise ValueError("ERA5 NetCDF files do not use the same latitude/longitude grid")
     times = tuple(stamp for piece in pieces for stamp in piece.times)
-    values = {
-        name: np.concatenate([piece.values[name] for piece in pieces], axis=0)
-        for name in REQUIRED_VARIABLES
-    }
+    values = {name: np.concatenate([piece.values[name] for piece in pieces], axis=0) for name in REQUIRED_VARIABLES}
     return Era5Cube(times, first.latitudes, first.longitudes, values)
 
 
@@ -189,10 +176,7 @@ def _read_era5_file(path: Path, gdal) -> Era5Cube:
     longitudes = _read_coordinate(root, "longitude")
     raw_times = _read_coordinate(root, "valid_time")
     times = tuple(datetime.fromtimestamp(float(value), UTC) for value in raw_times)
-    values = {
-        name: _read_weather_array(root, name, len(times), len(latitudes), len(longitudes))
-        for name in REQUIRED_VARIABLES
-    }
+    values = {name: _read_weather_array(root, name, len(times), len(latitudes), len(longitudes)) for name in REQUIRED_VARIABLES}
     return Era5Cube(times, latitudes, longitudes, values)
 
 
@@ -217,9 +201,7 @@ def _read_weather_array(root, name: str, nt: int, ny: int, nx: int) -> np.ndarra
         if dimensions[axis] in {"valid_time", "latitude", "longitude"}:
             continue
         if data.shape[axis] != 1:
-            raise ValueError(
-                f"unsupported non-singleton {dimensions[axis]!r} dimension in {name!r}"
-            )
+            raise ValueError(f"unsupported non-singleton {dimensions[axis]!r} dimension in {name!r}")
         data = np.take(data, 0, axis=axis)
         dimensions.pop(axis)
 
@@ -271,9 +253,7 @@ def write_daily_geopackage(
     for row, latitude in enumerate(latitudes):
         for column, longitude in enumerate(longitudes):
             if valid_locations[row, column]:
-                location_ids[(row, column)] = (
-                    f"{location_prefix}_{float(latitude):.4f}_{float(longitude):.4f}"
-                )
+                location_ids[(row, column)] = f"{location_prefix}_{float(latitude):.4f}_{float(longitude):.4f}"
     database.StartTransaction()
     try:
         for item in daily:
@@ -287,16 +267,13 @@ def write_daily_geopackage(
                     for field in DAILY_FIELDS:
                         feature.SetField(field, float(item.values[field][row, column]))
                     geometry = ogr.Geometry(ogr.wkbPoint)
-                    geometry.AddPoint_2D(
-                        float(longitudes[column]), float(latitudes[row])
-                    )
+                    geometry.AddPoint_2D(float(longitudes[column]), float(latitudes[row]))
                     feature.SetGeometry(geometry)
                     if layer.CreateFeature(feature) != 0:
                         raise RuntimeError("failed to write daily weather row")
         database.CommitTransaction()
         database.ExecuteSQL(
-            "CREATE INDEX IF NOT EXISTS weather_daily_points_location_date "
-            "ON weather_daily_points (location_id, date)"
+            "CREATE INDEX IF NOT EXISTS weather_daily_points_location_date ON weather_daily_points (location_id, date)"
         )
     except Exception:
         database.RollbackTransaction()
@@ -363,9 +340,7 @@ def _deaccumulate_era5_land(
     if len(times) < 2:
         raise ValueError(f"not enough values to de-accumulate {name}")
     increments[0] = increments[1]
-    warnings.append(
-        f"{name}: the first hourly increment was estimated from the nearest available hour."
-    )
+    warnings.append(f"{name}: the first hourly increment was estimated from the nearest available hour.")
     # CDS stores these cumulative fields as float32. Subtraction can therefore
     # produce tiny negative residues (the supplied ssrd sample reaches -4
     # J/m²), even though the physical hourly increment is zero. The tolerances
@@ -415,7 +390,5 @@ def _indices_with_edge_fill(
             filled += 1
         indices.append(index)
     if filled:
-        warnings.append(
-            f"{day}: filled {filled} missing edge {kind} hour(s) from the nearest available hour."
-        )
+        warnings.append(f"{day}: filled {filled} missing edge {kind} hour(s) from the nearest available hour.")
     return indices

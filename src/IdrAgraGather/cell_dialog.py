@@ -129,9 +129,7 @@ class CellBuilderDialog(QDialog):
         self.cell_width.setSuffix(" m")
         self.grid_boundary = QComboBox()
         self.grid_boundary.addItem("Only squares fully inside the AOI", "inside")
-        self.grid_boundary.addItem(
-            "All full squares intersecting the AOI", "intersect"
-        )
+        self.grid_boundary.addItem("All full squares intersecting the AOI", "intersect")
         self.elevation_method = QComboBox()
         self.elevation_method.addItem("Median", "median")
         self.elevation_method.addItem("Dominant 1 m band", "dominant")
@@ -168,9 +166,7 @@ class CellBuilderDialog(QDialog):
         layout = QVBoxLayout(page)
         toolbar = QHBoxLayout()
         defaults = QPushButton("Restore starter catalogue")
-        defaults.clicked.connect(
-            lambda: self._set_catalog(DEFAULT_CROPS, DEFAULT_LANDUSES)
-        )
+        defaults.clicked.connect(lambda: self._set_catalog(DEFAULT_CROPS, DEFAULT_LANDUSES))
         import_button = QPushButton("Import soil_uses.txt...")
         import_button.clicked.connect(self._import_landuses)
         toolbar.addWidget(defaults)
@@ -225,9 +221,7 @@ class CellBuilderDialog(QDialog):
         note.setWordWrap(True)
         layout.addWidget(note)
         self.allocation_table = QTableWidget(0, 3)
-        self.allocation_table.setHorizontalHeaderLabels(
-            ("Normalized source class", "IdrAgra land-use ID", "Share (%)")
-        )
+        self.allocation_table.setHorizontalHeaderLabels(("Normalized source class", "IdrAgra land-use ID", "Share (%)"))
         self.allocation_table.horizontalHeader().setSectionResizeMode(0, RESIZE_MODE.Stretch)
         self.allocation_table.horizontalHeader().setSectionResizeMode(1, RESIZE_MODE.ResizeToContents)
         self.allocation_table.horizontalHeader().setSectionResizeMode(2, RESIZE_MODE.ResizeToContents)
@@ -252,51 +246,18 @@ class CellBuilderDialog(QDialog):
         if path:
             self.load_workspace()
 
-    def load_workspace(self):
-        root = Path(self.workspace_edit.text().strip())
-        required = (
-            root / "soil" / "soil_profiles.gpkg",
-            root / "landuse" / "landuse.shp",
-            root / "topography" / "elevation_m_asl.tif",
-            root / "topography" / "slope_pct.tif",
-        )
-        missing = [path for path in required if not path.is_file()]
-        if missing:
-            self.input_status.setText(
-                "Missing: " + ", ".join(str(path.relative_to(root)) for path in missing)
-            )
+    def set_running(self, running):
+        self._running = bool(running)
+        self.build_button.setEnabled(not running)
+        self.workspace_edit.setEnabled(not running)
+
+    def _emit_request(self):
+        try:
+            request = self.request()
+        except Exception as exc:
+            QMessageBox.warning(self, "Cannot build cell view", str(exc))
             return
-        self.input_status.setText("Ready: normalized soil, land use, elevation and slope found.")
-        configuration = root / "cells" / "landuse_configuration.json"
-        saved_allocations = []
-        if configuration.is_file():
-            try:
-                crops, landuses, saved_allocations = read_configuration(configuration)
-                self._set_catalog(crops, landuses)
-                self.append_log(f"Loaded saved configuration from {configuration}.")
-            except Exception as exc:
-                self.append_log(f"WARNING: could not load saved configuration: {exc}")
-        layer = QgsVectorLayer(str(required[1]), "normalized land use", "ogr")
-        index = layer.fields().indexFromName("landuse") if layer.isValid() else -1
-        if index < 0:
-            self.append_log("ERROR: normalized land-use layer has no 'landuse' field.")
-            return
-        classes = sorted(str(value) for value in layer.uniqueValues(index))
-        if saved_allocations:
-            current = [item for item in saved_allocations if item.source_class in classes]
-            configured = {item.source_class for item in current}
-            current.extend(
-                LandUseAllocation(source, -1, 100.0)
-                for source in classes
-                if source not in configured
-            )
-            self._set_allocations(current, allow_unselected=True)
-        else:
-            self._set_allocations(
-                [LandUseAllocation(source, -1, 100.0) for source in classes],
-                allow_unselected=True,
-            )
-        self.append_log(f"Detected {len(classes)} normalized land-use class(es).")
+        self.runRequested.emit(request)
 
     def request(self):
         root = Path(self.workspace_edit.text().strip())
@@ -318,29 +279,51 @@ class CellBuilderDialog(QDialog):
             "allocations": allocations,
         }
 
-    def set_running(self, running):
-        self._running = bool(running)
-        self.build_button.setEnabled(not running)
-        self.workspace_edit.setEnabled(not running)
-
-    def append_log(self, message):
-        self.log.appendPlainText(str(message))
-
-    def _emit_request(self):
-        try:
-            request = self.request()
-        except Exception as exc:
-            QMessageBox.warning(self, "Cannot build cell view", str(exc))
-            return
-        self.runRequested.emit(request)
-
     def _browse_workspace(self):
-        directory = QFileDialog.getExistingDirectory(
-            self, "Choose gathered-input workspace", self.workspace_edit.text().strip()
-        )
+        directory = QFileDialog.getExistingDirectory(self, "Choose gathered-input workspace", self.workspace_edit.text().strip())
         if directory:
             self.workspace_edit.setText(directory)
             self.load_workspace()
+
+    def load_workspace(self):
+        root = Path(self.workspace_edit.text().strip())
+        required = (
+            root / "soil" / "soil_profiles.gpkg",
+            root / "landuse" / "landuse.shp",
+            root / "topography" / "elevation_m_asl.tif",
+            root / "topography" / "slope_pct.tif",
+        )
+        missing = [path for path in required if not path.is_file()]
+        if missing:
+            self.input_status.setText("Missing: " + ", ".join(str(path.relative_to(root)) for path in missing))
+            return
+        self.input_status.setText("Ready: normalized soil, land use, elevation and slope found.")
+        configuration = root / "cells" / "landuse_configuration.json"
+        saved_allocations = []
+        if configuration.is_file():
+            try:
+                crops, landuses, saved_allocations = read_configuration(configuration)
+                self._set_catalog(crops, landuses)
+                self.append_log(f"Loaded saved configuration from {configuration}.")
+            except Exception as exc:
+                self.append_log(f"WARNING: could not load saved configuration: {exc}")
+        layer = QgsVectorLayer(str(required[1]), "normalized land use", "ogr")
+        index = layer.fields().indexFromName("landuse") if layer.isValid() else -1
+        if index < 0:
+            self.append_log("ERROR: normalized land-use layer has no 'landuse' field.")
+            return
+        classes = sorted(str(value) for value in layer.uniqueValues(index))
+        if saved_allocations:
+            current = [item for item in saved_allocations if item.source_class in classes]
+            configured = {item.source_class for item in current}
+            current.extend(LandUseAllocation(source, -1, 100.0) for source in classes if source not in configured)
+            self._set_allocations(current, allow_unselected=True)
+        else:
+            self._set_allocations(
+                [LandUseAllocation(source, -1, 100.0) for source in classes],
+                allow_unselected=True,
+            )
+        self.append_log(f"Detected {len(classes)} normalized land-use class(es).")
 
     def _update_mode(self):
         is_grid = self.mode_combo.currentData() == "grid"
@@ -350,40 +333,6 @@ class CellBuilderDialog(QDialog):
         self.slope_method.setEnabled(is_grid)
         self.grid_note.setVisible(is_grid)
         self.vector_note.setVisible(not is_grid)
-
-    def _set_catalog(self, crops, landuses):
-        self.crop_table.setRowCount(0)
-        for crop in crops:
-            row = self.crop_table.rowCount()
-            self.crop_table.insertRow(row)
-            for column, value in enumerate((crop.crop_id, crop.name, crop.parameter_file)):
-                self.crop_table.setItem(row, column, QTableWidgetItem(str(value)))
-        self.landuse_table.setRowCount(0)
-        for item in landuses:
-            row = self.landuse_table.rowCount()
-            self.landuse_table.insertRow(row)
-            values = (item.landuse_id, item.name, item.crop1_id or "", item.crop2_id or "")
-            for column, value in enumerate(values):
-                self.landuse_table.setItem(row, column, QTableWidgetItem(str(value)))
-        if hasattr(self, "allocation_table"):
-            self._refresh_allocation_choices()
-
-    def _catalog(self):
-        crops = []
-        for row in range(self.crop_table.rowCount()):
-            values = [self._item_text(self.crop_table, row, column) for column in range(3)]
-            crops.append(CropDefinition(*values))
-        landuses = []
-        for row in range(self.landuse_table.rowCount()):
-            values = [self._item_text(self.landuse_table, row, column) for column in range(4)]
-            try:
-                landuse_id = int(values[0])
-            except ValueError as exc:
-                raise ValueError(f"Invalid land-use ID in catalogue row {row + 1}.") from exc
-            landuses.append(
-                LandUseDefinition(landuse_id, values[1], values[2] or None, values[3] or None)
-            )
-        return crops, landuses
 
     def _set_allocations(self, allocations, *, allow_unselected=False):
         self.allocation_table.setRowCount(0)
@@ -403,10 +352,20 @@ class CellBuilderDialog(QDialog):
             share = self.allocation_table.cellWidget(row, 2)
             if landuse_id is None:
                 raise ValueError(f"Choose an IdrAgra land use for {source!r}.")
-            allocations.append(
-                LandUseAllocation(source, int(landuse_id), float(share.value()))
-            )
+            allocations.append(LandUseAllocation(source, int(landuse_id), float(share.value())))
         return allocations
+
+    def _split_allocation(self):
+        row = self.allocation_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Split allocation", "Select an allocation row first.")
+            return
+        source = self._item_text(self.allocation_table, row, 0)
+        share_widget = self.allocation_table.cellWidget(row, 2)
+        old_share = float(share_widget.value())
+        first_share = old_share / 2.0
+        share_widget.setValue(first_share)
+        self._insert_allocation_row(source, None, old_share - first_share, row=row + 1)
 
     def _insert_allocation_row(self, source, landuse_id=None, share=100.0, *, row=None):
         if row is None:
@@ -422,39 +381,6 @@ class CellBuilderDialog(QDialog):
         share_widget.setDecimals(2)
         share_widget.setValue(float(share))
         self.allocation_table.setCellWidget(row, 2, share_widget)
-
-    def _landuse_combo(self, selected=None):
-        combo = QComboBox()
-        combo.addItem("Choose...", None)
-        try:
-            _, landuses = self._catalog()
-        except Exception:
-            landuses = []
-        for item in landuses:
-            combo.addItem(f"{item.landuse_id} - {item.name}", item.landuse_id)
-            if selected == item.landuse_id:
-                combo.setCurrentIndex(combo.count() - 1)
-        return combo
-
-    def _refresh_allocation_choices(self):
-        if not hasattr(self, "allocation_table"):
-            return
-        for row in range(self.allocation_table.rowCount()):
-            old = self.allocation_table.cellWidget(row, 1)
-            selected = old.currentData() if old is not None else None
-            self.allocation_table.setCellWidget(row, 1, self._landuse_combo(selected))
-
-    def _split_allocation(self):
-        row = self.allocation_table.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Split allocation", "Select an allocation row first.")
-            return
-        source = self._item_text(self.allocation_table, row, 0)
-        share_widget = self.allocation_table.cellWidget(row, 2)
-        old_share = float(share_widget.value())
-        first_share = old_share / 2.0
-        share_widget.setValue(first_share)
-        self._insert_allocation_row(source, None, old_share - first_share, row=row + 1)
 
     def _add_crop(self):
         row = self.crop_table.rowCount()
@@ -480,11 +406,6 @@ class CellBuilderDialog(QDialog):
         rows = sorted({index.row() for index in table.selectedIndexes()}, reverse=True)
         for row in rows:
             table.removeRow(row)
-
-    @staticmethod
-    def _item_text(table, row, column):
-        item = table.item(row, column)
-        return item.text().strip() if item is not None else ""
 
     def _import_landuses(self):
         filename, _ = QFileDialog.getOpenFileName(
@@ -512,3 +433,64 @@ class CellBuilderDialog(QDialog):
                 return
         self._set_catalog(crops, landuses)
         self.append_log(f"Imported {len(landuses)} land use(s) from {filename}.")
+
+    def append_log(self, message):
+        self.log.appendPlainText(str(message))
+
+    def _set_catalog(self, crops, landuses):
+        self.crop_table.setRowCount(0)
+        for crop in crops:
+            row = self.crop_table.rowCount()
+            self.crop_table.insertRow(row)
+            for column, value in enumerate((crop.crop_id, crop.name, crop.parameter_file)):
+                self.crop_table.setItem(row, column, QTableWidgetItem(str(value)))
+        self.landuse_table.setRowCount(0)
+        for item in landuses:
+            row = self.landuse_table.rowCount()
+            self.landuse_table.insertRow(row)
+            values = (item.landuse_id, item.name, item.crop1_id or "", item.crop2_id or "")
+            for column, value in enumerate(values):
+                self.landuse_table.setItem(row, column, QTableWidgetItem(str(value)))
+        if hasattr(self, "allocation_table"):
+            self._refresh_allocation_choices()
+
+    def _refresh_allocation_choices(self):
+        if not hasattr(self, "allocation_table"):
+            return
+        for row in range(self.allocation_table.rowCount()):
+            old = self.allocation_table.cellWidget(row, 1)
+            selected = old.currentData() if old is not None else None
+            self.allocation_table.setCellWidget(row, 1, self._landuse_combo(selected))
+
+    def _landuse_combo(self, selected=None):
+        combo = QComboBox()
+        combo.addItem("Choose...", None)
+        try:
+            _, landuses = self._catalog()
+        except Exception:
+            landuses = []
+        for item in landuses:
+            combo.addItem(f"{item.landuse_id} - {item.name}", item.landuse_id)
+            if selected == item.landuse_id:
+                combo.setCurrentIndex(combo.count() - 1)
+        return combo
+
+    def _catalog(self):
+        crops = []
+        for row in range(self.crop_table.rowCount()):
+            values = [self._item_text(self.crop_table, row, column) for column in range(3)]
+            crops.append(CropDefinition(*values))
+        landuses = []
+        for row in range(self.landuse_table.rowCount()):
+            values = [self._item_text(self.landuse_table, row, column) for column in range(4)]
+            try:
+                landuse_id = int(values[0])
+            except ValueError as exc:
+                raise ValueError(f"Invalid land-use ID in catalogue row {row + 1}.") from exc
+            landuses.append(LandUseDefinition(landuse_id, values[1], values[2] or None, values[3] or None))
+        return crops, landuses
+
+    @staticmethod
+    def _item_text(table, row, column):
+        item = table.item(row, column)
+        return item.text().strip() if item is not None else ""

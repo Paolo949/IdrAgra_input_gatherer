@@ -68,59 +68,8 @@ class _Cell:
         return float(self.geometry.GetArea())
 
 
-def allocate_landuse_ids(
-    items: Sequence[tuple[str, float]],
-    allocations: Sequence[LandUseAllocation],
-) -> tuple[dict[str, int], dict[int, float], dict[int, float]]:
-    """Assign indivisible areas deterministically while approaching target shares."""
-
-    if not items:
-        return {}, {}, {}
-    by_source: dict[str, list[tuple[str, float]]] = {}
-    for key, area in items:
-        if area <= 0:
-            raise ValueError("Cell allocation areas must be positive.")
-        source, _, identity = key.partition("\0")
-        by_source.setdefault(source, []).append((identity, float(area)))
-    rules: dict[str, list[LandUseAllocation]] = {}
-    for rule in allocations:
-        rules.setdefault(rule.source_class.strip(), []).append(rule)
-
-    assigned: dict[str, int] = {}
-    requested: dict[int, float] = {}
-    generated: dict[int, float] = {}
-    for source, source_items in sorted(by_source.items()):
-        source_rules = rules.get(source)
-        if not source_rules:
-            raise ValueError(f"No IdrAgra land-use allocation for {source!r}.")
-        total_area = sum(area for _, area in source_items)
-        targets = {
-            rule.landuse_id: total_area * rule.share_pct / 100.0
-            for rule in source_rules
-        }
-        actual = {landuse_id: 0.0 for landuse_id in targets}
-        for landuse_id, area in targets.items():
-            requested[landuse_id] = requested.get(landuse_id, 0.0) + area
-        ordered = sorted(
-            source_items,
-            key=lambda pair: hashlib.sha256(
-                f"{source}\0{pair[0]}".encode("utf-8")
-            ).digest(),
-        )
-        for identity, area in ordered:
-            landuse_id = max(
-                sorted(targets),
-                key=lambda candidate: targets[candidate] - actual[candidate],
-            )
-            assigned[f"{source}\0{identity}"] = landuse_id
-            actual[landuse_id] += area
-            generated[landuse_id] = generated.get(landuse_id, 0.0) + area
-    return assigned, requested, generated
-
-
+# Return the median within the most populated numeric band.
 def dominant_continuous_value(values, *, bin_width: float = 1.0) -> float:
-    """Return the median within the most populated numeric band."""
-
     from collections import Counter
     from statistics import median
 
@@ -138,6 +87,7 @@ def dominant_continuous_value(values, *, bin_width: float = 1.0) -> float:
     return float(median(value for value, band in zip(samples, bins) if band == winner))
 
 
+# Create a canonical cell GeoPackage and, in grid mode, aligned rasters.
 def build_simulation_cells(
     output_root: str | Path,
     *,
@@ -156,8 +106,6 @@ def build_simulation_cells(
     slope_path: str | Path | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> CellBuildResult:
-    """Create a canonical cell GeoPackage and, in grid mode, aligned rasters."""
-
     mode = str(mode).strip().casefold()
     if mode not in {"grid", "vector"}:
         raise ValueError("Cell mode must be 'grid' or 'vector'.")
@@ -165,9 +113,7 @@ def build_simulation_cells(
         raise ValueError("Grid cell width must be positive.")
     grid_boundary_policy = str(grid_boundary_policy).strip().casefold()
     if grid_boundary_policy not in {"inside", "intersect"}:
-        raise ValueError(
-            "Grid boundary policy must be 'inside' or 'intersect'."
-        )
+        raise ValueError("Grid boundary policy must be 'inside' or 'intersect'.")
     if elevation_method not in {"mean", "median", "dominant", "centroid"}:
         raise ValueError(f"Unsupported elevation aggregation: {elevation_method}")
     if slope_method not in {"mean", "median", "dominant", "centroid"}:
@@ -178,9 +124,7 @@ def build_simulation_cells(
     root = Path(output_root).resolve()
     soil_path = Path(soil_path or root / "soil" / "soil_profiles.gpkg").resolve()
     landuse_path = Path(landuse_path or root / "landuse" / "landuse.shp").resolve()
-    elevation_path = Path(
-        elevation_path or root / "topography" / "elevation_m_asl.tif"
-    ).resolve()
+    elevation_path = Path(elevation_path or root / "topography" / "elevation_m_asl.tif").resolve()
     slope_path = Path(slope_path or root / "topography" / "slope_pct.tif").resolve()
     for label, path in (
         ("soil profiles", soil_path),
@@ -207,26 +151,16 @@ def build_simulation_cells(
         raise ValueError("Elevation and slope rasters use different coordinate systems.")
     if on_status:
         on_status("Reading normalized soil and land-use polygons.")
-    soil_features = _read_features(
-        soil_path, "profile_id", elevation.spatial_reference, ogr, osr, integer=True
-    )
-    landuse_features = _read_features(
-        landuse_path, "landuse", elevation.spatial_reference, ogr, osr
-    )
+    soil_features = _read_features(soil_path, "profile_id", elevation.spatial_reference, ogr, osr, integer=True)
+    landuse_features = _read_features(landuse_path, "landuse", elevation.spatial_reference, ogr, osr)
     source_classes = sorted({str(value) for value, _ in landuse_features})
     validate_allocations(allocations, landuses, source_classes=source_classes)
     aoi = aoi_geometry(bbox, elevation.spatial_reference, ogr, osr)
 
     if mode == "grid":
         if on_status:
-            boundary_text = (
-                "fully inside the AOI"
-                if grid_boundary_policy == "inside"
-                else "intersecting the AOI"
-            )
-            on_status(
-                f"Building a {cell_width_m:g} m regular cell grid {boundary_text}."
-            )
+            boundary_text = "fully inside the AOI" if grid_boundary_policy == "inside" else "intersecting the AOI"
+            on_status(f"Building a {cell_width_m:g} m regular cell grid {boundary_text}.")
         cells, grid_spec = _build_grid_cells(
             elevation,
             slope,
@@ -256,17 +190,9 @@ def build_simulation_cells(
 
     allocation_items = []
     for index, cell in enumerate(cells):
-        identity = (
-            f"r{cell.row}:c{cell.column}"
-            if cell.row is not None
-            else f"v{index}:{_centroid_key(cell.geometry)}"
-        )
-        allocation_items.append(
-            (f"{cell.source_landuse}\0{identity}", cell.area_m2)
-        )
-    assigned, requested, generated = allocate_landuse_ids(
-        allocation_items, allocations
-    )
+        identity = f"r{cell.row}:c{cell.column}" if cell.row is not None else f"v{index}:{_centroid_key(cell.geometry)}"
+        allocation_items.append((f"{cell.source_landuse}\0{identity}", cell.area_m2))
+    assigned, requested, generated = allocate_landuse_ids(allocation_items, allocations)
     for cell, (allocation_key, _) in zip(cells, allocation_items):
         cell.landuse_id = assigned[allocation_key]
 
@@ -278,13 +204,9 @@ def build_simulation_cells(
         cell.cell_id = cell_id
 
     warnings: list[str] = []
-    missing_topography = sum(
-        cell.elevation_m_asl is None or cell.slope_pct is None for cell in cells
-    )
+    missing_topography = sum(cell.elevation_m_asl is None or cell.slope_pct is None for cell in cells)
     if missing_topography:
-        warnings.append(
-            f"{missing_topography} cell(s) have missing elevation or slope values."
-        )
+        warnings.append(f"{missing_topography} cell(s) have missing elevation or slope values.")
     if mode == "vector":
         for landuse_id in sorted(set(requested) | set(generated)):
             target = requested.get(landuse_id, 0.0)
@@ -331,20 +253,40 @@ def build_simulation_cells(
             output_dir / GRID_SLOPE_NAME,
         )
         _write_grid_raster(
-            raster_paths[0], soil_values, geotransform, elevation.projection, gdal,
-            unit="", description="dominant soil profile ID"
+            raster_paths[0],
+            soil_values,
+            geotransform,
+            elevation.projection,
+            gdal,
+            unit="",
+            description="dominant soil profile ID",
         )
         _write_grid_raster(
-            raster_paths[1], landuse_values, geotransform, elevation.projection, gdal,
-            unit="", description="allocated IdrAgra land-use ID"
+            raster_paths[1],
+            landuse_values,
+            geotransform,
+            elevation.projection,
+            gdal,
+            unit="",
+            description="allocated IdrAgra land-use ID",
         )
         _write_grid_raster(
-            raster_paths[2], elevation_values, geotransform, elevation.projection, gdal,
-            unit="m", description="aggregated elevation above mean sea level"
+            raster_paths[2],
+            elevation_values,
+            geotransform,
+            elevation.projection,
+            gdal,
+            unit="m",
+            description="aggregated elevation above mean sea level",
         )
         _write_grid_raster(
-            raster_paths[3], slope_values, geotransform, elevation.projection, gdal,
-            unit="percent", description="aggregated terrain slope"
+            raster_paths[3],
+            slope_values,
+            geotransform,
+            elevation.projection,
+            gdal,
+            unit="percent",
+            description="aggregated terrain slope",
         )
 
     stale_grid_paths = tuple(
@@ -361,10 +303,7 @@ def build_simulation_cells(
             try:
                 stale.unlink(missing_ok=True)
             except PermissionError as exc:
-                raise RuntimeError(
-                    f"Could not remove stale grid output {stale}; close its QGIS layer "
-                    "and try again."
-                ) from exc
+                raise RuntimeError(f"Could not remove stale grid output {stale}; close its QGIS layer and try again.") from exc
 
     manifest = Manifest(root)
     if mode == "vector":
@@ -428,6 +367,50 @@ def build_simulation_cells(
     )
 
 
+# Assign indivisible areas deterministically while approaching target shares.
+def allocate_landuse_ids(
+    items: Sequence[tuple[str, float]],
+    allocations: Sequence[LandUseAllocation],
+) -> tuple[dict[str, int], dict[int, float], dict[int, float]]:
+    if not items:
+        return {}, {}, {}
+    by_source: dict[str, list[tuple[str, float]]] = {}
+    for key, area in items:
+        if area <= 0:
+            raise ValueError("Cell allocation areas must be positive.")
+        source, _, identity = key.partition("\0")
+        by_source.setdefault(source, []).append((identity, float(area)))
+    rules: dict[str, list[LandUseAllocation]] = {}
+    for rule in allocations:
+        rules.setdefault(rule.source_class.strip(), []).append(rule)
+
+    assigned: dict[str, int] = {}
+    requested: dict[int, float] = {}
+    generated: dict[int, float] = {}
+    for source, source_items in sorted(by_source.items()):
+        source_rules = rules.get(source)
+        if not source_rules:
+            raise ValueError(f"No IdrAgra land-use allocation for {source!r}.")
+        total_area = sum(area for _, area in source_items)
+        targets = {rule.landuse_id: total_area * rule.share_pct / 100.0 for rule in source_rules}
+        actual = {landuse_id: 0.0 for landuse_id in targets}
+        for landuse_id, area in targets.items():
+            requested[landuse_id] = requested.get(landuse_id, 0.0) + area
+        ordered = sorted(
+            source_items,
+            key=lambda pair: hashlib.sha256(f"{source}\0{pair[0]}".encode("utf-8")).digest(),
+        )
+        for identity, area in ordered:
+            landuse_id = max(
+                sorted(targets),
+                key=lambda candidate: targets[candidate] - actual[candidate],
+            )
+            assigned[f"{source}\0{identity}"] = landuse_id
+            actual[landuse_id] += area
+            generated[landuse_id] = generated.get(landuse_id, 0.0) + area
+    return assigned, requested, generated
+
+
 class _RasterSampler:
     def __init__(self, path, gdal, ogr, osr):
         self.gdal = gdal
@@ -461,6 +444,21 @@ class _RasterSampler:
             gt[3],
         )
 
+    def aggregate(self, geometry, method):
+        import numpy as np
+
+        if method == "centroid":
+            point = geometry.Centroid()
+            return self.sample_bilinear(point.GetX(), point.GetY())
+        values = self.values(geometry)
+        if values.size == 0:
+            return None
+        if method == "mean":
+            return float(np.mean(values))
+        if method == "median":
+            return float(np.median(values))
+        return dominant_continuous_value(values)
+
     def values(self, geometry):
         import numpy as np
 
@@ -483,12 +481,8 @@ class _RasterSampler:
             return np.empty(0, dtype=np.float64)
         array = self.band.ReadAsArray(col0, row0, col1 - col0, row1 - row0)
         local_gt = list(self.geotransform)
-        local_gt[0], local_gt[3] = self.gdal.ApplyGeoTransform(
-            self.geotransform, col0, row0
-        )
-        mask = self.gdal.GetDriverByName("MEM").Create(
-            "", col1 - col0, row1 - row0, 1, self.gdal.GDT_Byte
-        )
+        local_gt[0], local_gt[3] = self.gdal.ApplyGeoTransform(self.geotransform, col0, row0)
+        mask = self.gdal.GetDriverByName("MEM").Create("", col1 - col0, row1 - row0, 1, self.gdal.GDT_Byte)
         mask.SetGeoTransform(tuple(local_gt))
         mask.SetProjection(self.projection)
         memory_driver = self.ogr.GetDriverByName("Memory")
@@ -506,42 +500,27 @@ class _RasterSampler:
         feature = layer = vector = mask = None
         return result
 
-    def aggregate(self, geometry, method):
-        import numpy as np
-
-        if method == "centroid":
-            point = geometry.Centroid()
-            return self.sample_bilinear(point.GetX(), point.GetY())
-        values = self.values(geometry)
-        if values.size == 0:
-            return None
-        if method == "mean":
-            return float(np.mean(values))
-        if method == "median":
-            return float(np.median(values))
-        return dominant_continuous_value(values)
-
+    # Resample the source into one complete value per target grid cell.
+    #
+    # Aggregation methods only make sense when a target cell covers multiple
+    # source pixels. For a finer target grid, bilinear interpolation avoids
+    # the empty-cell pattern caused by looking only for source pixel centres.
     def grid_values(self, rows, columns, geotransform, method):
-        """Resample the source into one complete value per target grid cell.
-
-        Aggregation methods only make sense when a target cell covers multiple
-        source pixels. For a finer target grid, bilinear interpolation avoids
-        the empty-cell pattern caused by looking only for source pixel centres.
-        """
-
         import numpy as np
 
         target_resolution = abs(float(geotransform[1]))
-        source_resolution = max(
-            abs(float(self.geotransform[1])), abs(float(self.geotransform[5]))
-        )
+        source_resolution = max(abs(float(self.geotransform[1])), abs(float(self.geotransform[5])))
         upsampling = target_resolution < source_resolution
-        resampling = "bilinear" if upsampling else {
-            "mean": "average",
-            "median": "med",
-            "dominant": "mode",
-            "centroid": "bilinear",
-        }[method]
+        resampling = (
+            "bilinear"
+            if upsampling
+            else {
+                "mean": "average",
+                "median": "med",
+                "dominant": "mode",
+                "centroid": "bilinear",
+            }[method]
+        )
         source = self.dataset
         quantized = None
         if method == "dominant" and not upsampling:
@@ -611,9 +590,7 @@ class _RasterSampler:
                 if not (0 <= row < self.dataset.RasterYSize and 0 <= column < self.dataset.RasterXSize):
                     continue
                 value = float(self.band.ReadAsArray(column, row, 1, 1)[0, 0])
-                if not np.isfinite(value) or (
-                    self.nodata is not None and np.isclose(value, self.nodata)
-                ):
+                if not np.isfinite(value) or (self.nodata is not None and np.isclose(value, self.nodata)):
                     continue
                 weight = wx * wy
                 total += value * weight
@@ -633,8 +610,10 @@ def _read_workspace_bbox(root: Path) -> BoundingBox:
     aoi = data.get("aoi") or {}
     try:
         return BoundingBox(
-            float(aoi["west"]), float(aoi["south"]),
-            float(aoi["east"]), float(aoi["north"]),
+            float(aoi["west"]),
+            float(aoi["south"]),
+            float(aoi["east"]),
+            float(aoi["north"]),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("The workspace manifest has no valid EPSG:4326 AOI.") from exc
@@ -651,7 +630,8 @@ def _read_features(path, field_name, target_srs, ogr, osr, *, integer=False):
     definition = layer.GetLayerDefn()
     field_index = next(
         (
-            index for index in range(definition.GetFieldCount())
+            index
+            for index in range(definition.GetFieldCount())
             if definition.GetFieldDefn(index).GetName().casefold() == field_name.casefold()
         ),
         -1,
@@ -687,20 +667,24 @@ def _read_features(path, field_name, target_srs, ogr, osr, *, integer=False):
 
 
 def _build_grid_cells(
-    elevation, slope, soil_features, landuse_features, aoi, cell_width,
-    boundary_policy, elevation_method, slope_method, ogr,
+    elevation,
+    slope,
+    soil_features,
+    landuse_features,
+    aoi,
+    cell_width,
+    boundary_policy,
+    elevation_method,
+    slope_method,
+    ogr,
 ):
     min_x, min_y, max_x, max_y = elevation.extent
     origin_x = math.floor(min_x / cell_width) * cell_width
     origin_y = math.ceil(max_y / cell_width) * cell_width
     columns = int(math.ceil((max_x - origin_x) / cell_width))
     rows = int(math.ceil((origin_y - min_y) / cell_width))
-    grid_geotransform = (
-        origin_x, cell_width, 0.0, origin_y, 0.0, -cell_width
-    )
-    elevation_values = elevation.grid_values(
-        rows, columns, grid_geotransform, elevation_method
-    )
+    grid_geotransform = (origin_x, cell_width, 0.0, origin_y, 0.0, -cell_width)
+    elevation_values = elevation.grid_values(rows, columns, grid_geotransform, elevation_method)
     slope_values = slope.grid_values(rows, columns, grid_geotransform, slope_method)
     cells = []
     for row in range(rows):
@@ -717,14 +701,10 @@ def _build_grid_cells(
                 continue
             square_area = cell_width * cell_width
             aoi_fraction = min(1.0, active.GetArea() / square_area)
-            if boundary_policy == "inside" and not math.isclose(
-                aoi_fraction, 1.0, rel_tol=0.0, abs_tol=1e-9
-            ):
+            if boundary_policy == "inside" and not math.isclose(aoi_fraction, 1.0, rel_tol=0.0, abs_tol=1e-9):
                 continue
             soil_id, soil_coverage = _dominant_category(active, soil_features)
-            source_landuse, landuse_coverage = _dominant_category(
-                active, landuse_features
-            )
+            source_landuse, landuse_coverage = _dominant_category(active, landuse_features)
             if soil_id is None or source_landuse is None:
                 continue
             elevation_value = _valid_grid_value(elevation_values[row, column])
@@ -732,13 +712,9 @@ def _build_grid_cells(
             if elevation_value is None or slope_value is None:
                 centroid = active.Centroid()
                 if elevation_value is None:
-                    elevation_value = elevation.sample_bilinear(
-                        centroid.GetX(), centroid.GetY()
-                    )
+                    elevation_value = elevation.sample_bilinear(centroid.GetX(), centroid.GetY())
                 if slope_value is None:
-                    slope_value = slope.sample_bilinear(
-                        centroid.GetX(), centroid.GetY()
-                    )
+                    slope_value = slope.sample_bilinear(centroid.GetX(), centroid.GetY())
             cells.append(
                 _Cell(
                     square,
@@ -750,9 +726,7 @@ def _build_grid_cells(
                     slope_value,
                     row=row + 1,
                     column=column + 1,
-                    aoi_fraction=(
-                        1.0 if boundary_policy == "inside" else aoi_fraction
-                    ),
+                    aoi_fraction=(1.0 if boundary_policy == "inside" else aoi_fraction),
                 )
             )
     return cells, (
@@ -769,9 +743,7 @@ def _valid_grid_value(value):
     return value
 
 
-def _build_vector_cells(
-    elevation, slope, soil_features, landuse_features, aoi, ogr
-):
+def _build_vector_cells(elevation, slope, soil_features, landuse_features, aoi, ogr):
     grouped: dict[tuple[int, str], list] = {}
     for soil_id, soil_geometry in soil_features:
         if not soil_geometry.Intersects(aoi):
@@ -831,31 +803,17 @@ def _dominant_category(active, features):
 
 def _rectangle(left, bottom, right, top, ogr):
     ring = ogr.Geometry(ogr.wkbLinearRing)
-    for x, y in (
-        (left, bottom), (right, bottom), (right, top), (left, top), (left, bottom)
-    ):
+    for x, y in ((left, bottom), (right, bottom), (right, top), (left, top), (left, bottom)):
         ring.AddPoint_2D(x, y)
     polygon = ogr.Geometry(ogr.wkbPolygon)
     polygon.AddGeometry(ring)
     return polygon
 
 
-def _polygon_parts(geometry, ogr):
-    kind = ogr.GT_Flatten(geometry.GetGeometryType())
-    if kind == ogr.wkbPolygon:
-        yield geometry.Clone()
-    elif kind in {ogr.wkbMultiPolygon, ogr.wkbGeometryCollection}:
-        for index in range(geometry.GetGeometryCount()):
-            yield from _polygon_parts(geometry.GetGeometryRef(index), ogr)
-
-
 def _envelopes_overlap(first, second):
     a_min_x, a_max_x, a_min_y, a_max_y = first.GetEnvelope()
     b_min_x, b_max_x, b_min_y, b_max_y = second.GetEnvelope()
-    return not (
-        a_max_x < b_min_x or b_max_x < a_min_x
-        or a_max_y < b_min_y or b_max_y < a_min_y
-    )
+    return not (a_max_x < b_min_x or b_max_x < a_min_x or a_max_y < b_min_y or b_max_y < a_min_y)
 
 
 def _centroid_key(geometry):
@@ -947,14 +905,8 @@ def _write_cells(path, cells, mode, landuse_by_id, spatial_reference, ogr, osr):
                 raise RuntimeError(f"Could not write simulation cell {cell.cell_id}")
             feature = None
         database.CommitTransaction()
-        database.ExecuteSQL(
-            "CREATE INDEX IF NOT EXISTS simulation_cells_landuse_id "
-            "ON simulation_cells (landuse_id)"
-        )
-        database.ExecuteSQL(
-            "CREATE INDEX IF NOT EXISTS simulation_cells_soil_id "
-            "ON simulation_cells (soil_id)"
-        )
+        database.ExecuteSQL("CREATE INDEX IF NOT EXISTS simulation_cells_landuse_id ON simulation_cells (landuse_id)")
+        database.ExecuteSQL("CREATE INDEX IF NOT EXISTS simulation_cells_soil_id ON simulation_cells (soil_id)")
     except Exception:
         database.RollbackTransaction()
         raise
@@ -963,14 +915,25 @@ def _write_cells(path, cells, mode, landuse_by_id, spatial_reference, ogr, osr):
     _replace_file(temporary, path)
 
 
-def _write_grid_raster(
-    path, values, geotransform, projection, gdal, *, unit, description
-):
+def _polygon_parts(geometry, ogr):
+    kind = ogr.GT_Flatten(geometry.GetGeometryType())
+    if kind == ogr.wkbPolygon:
+        yield geometry.Clone()
+    elif kind in {ogr.wkbMultiPolygon, ogr.wkbGeometryCollection}:
+        for index in range(geometry.GetGeometryCount()):
+            yield from _polygon_parts(geometry.GetGeometryRef(index), ogr)
+
+
+def _write_grid_raster(path, values, geotransform, projection, gdal, *, unit, description):
     temporary = path.with_name(path.stem + ".tmp.tif")
     temporary.unlink(missing_ok=True)
     data_type = gdal.GDT_Int32 if values.dtype.kind in "iu" else gdal.GDT_Float32
     dataset = gdal.GetDriverByName("GTiff").Create(
-        str(temporary), values.shape[1], values.shape[0], 1, data_type,
+        str(temporary),
+        values.shape[1],
+        values.shape[0],
+        1,
+        data_type,
         options=["TILED=YES", "COMPRESS=DEFLATE", "BIGTIFF=IF_SAFER"],
     )
     if dataset is None:
@@ -994,6 +957,4 @@ def _replace_file(temporary: Path, target: Path):
         temporary.replace(target)
     except PermissionError as exc:
         temporary.unlink(missing_ok=True)
-        raise RuntimeError(
-            f"Could not replace {target}; close its loaded QGIS layer and try again."
-        ) from exc
+        raise RuntimeError(f"Could not replace {target}; close its loaded QGIS layer and try again.") from exc

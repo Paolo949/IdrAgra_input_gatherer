@@ -4,9 +4,21 @@ from pathlib import Path
 
 from qgis.PyQt.QtCore import pyqtSignal  # pyright: ignore[reportAttributeAccessIssue]
 from qgis.PyQt.QtWidgets import (  # pyright: ignore[reportAttributeAccessIssue]
-    QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
-    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
 
 
@@ -85,18 +97,38 @@ class V2ExportDialog(QDialog):
     def _settings_group(self):
         group = QGroupBox("v2 model settings")
         layout = QFormLayout(group)
-        self.evap_depth = QDoubleSpinBox(); self.evap_depth.setRange(0.01, 2.0); self.evap_depth.setDecimals(2); self.evap_depth.setValue(0.10); self.evap_depth.setSuffix(" m")
-        self.root_depth = QDoubleSpinBox(); self.root_depth.setRange(0.01, 4.0); self.root_depth.setDecimals(2); self.root_depth.setValue(0.90); self.root_depth.setSuffix(" m")
-        self.neighbors = QSpinBox(); self.neighbors.setRange(1, 10); self.neighbors.setValue(2)
+        self.evap_depth = QDoubleSpinBox()
+        self.evap_depth.setRange(0.01, 2.0)
+        self.evap_depth.setDecimals(2)
+        self.evap_depth.setValue(0.10)
+        self.evap_depth.setSuffix(" m")
+        self.root_depth = QDoubleSpinBox()
+        self.root_depth.setRange(0.01, 4.0)
+        self.root_depth.setDecimals(2)
+        self.root_depth.setValue(0.90)
+        self.root_depth.setSuffix(" m")
+        self.neighbors = QSpinBox()
+        self.neighbors.setRange(1, 10)
+        self.neighbors.setValue(2)
         self.condition = QComboBox()
-        self.condition.addItem("Fair (2)", 2); self.condition.addItem("Good (1)", 1); self.condition.addItem("Poor (3)", 3)
+        self.condition.addItem("Fair (2)", 2)
+        self.condition.addItem("Good (1)", 1)
+        self.condition.addItem("Poor (3)", 3)
         layout.addRow("Evaporative-layer thickness", self.evap_depth)
         layout.addRow("Root-layer thickness", self.root_depth)
         layout.addRow("Nearest weather stations", self.neighbors)
         layout.addRow("Hydrologic condition", self.condition)
-        note = QLabel("The two thicknesses are cumulative: defaults export 0-0.10 m and 0.10-1.00 m, matching the legacy IdrAgraTools aggregation.")
-        note.setWordWrap(True); layout.addRow(note)
+        note = QLabel(
+            "The two thicknesses are cumulative: defaults export 0-0.10 m and 0.10-1.00 m, matching the legacy IdrAgraTools aggregation."
+        )
+        note.setWordWrap(True)
+        layout.addRow(note)
         return group
+
+    def _browse_workspace(self):
+        folder = QFileDialog.getExistingDirectory(self, "Choose gathered-input workspace", self.workspace_edit.text().strip())
+        if folder:
+            self.set_workspace(folder)
 
     def set_workspace(self, path):
         root = Path(path) if path else Path()
@@ -108,7 +140,8 @@ class V2ExportDialog(QDialog):
     def refresh_status(self):
         root = Path(self.workspace_edit.text().strip())
         expected = (
-            root / "cells" / "soil_id.tif", root / "cells" / "landuse_id.tif",
+            root / "cells" / "soil_id.tif",
+            root / "cells" / "landuse_id.tif",
             root / "soil" / "soil_hydraulics.gpkg",
             root / "weather" / "weather_daily_points.gpkg",
         )
@@ -117,38 +150,54 @@ class V2ExportDialog(QDialog):
             "Ready for v2 export." if not missing else "Missing required workspace outputs: " + ", ".join(missing)
         )
 
+    def _browse_destination(self):
+        self._choose(self.destination_edit, "Choose v2 export folder")
+
+    def _browse_crop_folder(self):
+        self._choose(self.crop_folder_edit, "Choose crop parameter folder")
+
     def _choose(self, edit, title):
         folder = QFileDialog.getExistingDirectory(self, title, edit.text().strip() or self.workspace_edit.text().strip())
-        if folder: edit.setText(folder)
+        if folder:
+            edit.setText(folder)
 
-    def _browse_workspace(self):
-        folder = QFileDialog.getExistingDirectory(self, "Choose gathered-input workspace", self.workspace_edit.text().strip())
-        if folder: self.set_workspace(folder)
-
-    def _browse_destination(self): self._choose(self.destination_edit, "Choose v2 export folder")
-    def _browse_crop_folder(self): self._choose(self.crop_folder_edit, "Choose crop parameter folder")
+    def _emit_request(self):
+        try:
+            request = self.request()
+        except Exception as exc:
+            self.append_log("ERROR: " + str(exc))
+            return
+        self.runRequested.emit(request)
 
     def request(self):
         root = Path(self.workspace_edit.text().strip())
-        if not root.is_dir(): raise ValueError("Choose an existing gathered-input workspace.")
+        if not root.is_dir():
+            raise ValueError("Choose an existing gathered-input workspace.")
         destination = Path(self.destination_edit.text().strip())
-        if not destination.name: raise ValueError("Choose a v2 export folder.")
+        if not destination.name:
+            raise ValueError("Choose a v2 export folder.")
         return {
-            "workspace": str(root), "destination": str(destination),
-            "evap_layer_m": self.evap_depth.value(), "root_layer_m": self.root_depth.value(),
-            "weather_neighbors": self.neighbors.value(), "hydrologic_condition": self.condition.currentData(),
+            "workspace": str(root),
+            "destination": str(destination),
+            "evap_layer_m": self.evap_depth.value(),
+            "root_layer_m": self.root_depth.value(),
+            "weather_neighbors": self.neighbors.value(),
+            "hydrologic_condition": self.condition.currentData(),
             "crop_parameter_folder": self.crop_folder_edit.text().strip() or None,
         }
 
-    def _emit_request(self):
-        try: request = self.request()
-        except Exception as exc:
-            self.append_log("ERROR: " + str(exc)); return
-        self.runRequested.emit(request)
-
     def set_running(self, running):
         self.export_button.setEnabled(not running)
-        for widget in (self.workspace_edit, self.destination_edit, self.crop_folder_edit, self.evap_depth, self.root_depth, self.neighbors, self.condition):
+        for widget in (
+            self.workspace_edit,
+            self.destination_edit,
+            self.crop_folder_edit,
+            self.evap_depth,
+            self.root_depth,
+            self.neighbors,
+            self.condition,
+        ):
             widget.setEnabled(not running)
 
-    def append_log(self, message): self.log.appendPlainText(str(message))
+    def append_log(self, message):
+        self.log.appendPlainText(str(message))

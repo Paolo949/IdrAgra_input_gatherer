@@ -1,5 +1,7 @@
 from datetime import date
+from threading import Lock
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -7,7 +9,7 @@ import sys
 import types
 
 from IdrAgraGather.core.models import BoundingBox, DateWindow
-from IdrAgraGather.core.providers.era5_land import DATASET, fetch, plan_jobs, write_plan
+from IdrAgraGather.core.providers.era5_land import DATASET, MAX_PARALLEL_REQUESTS, fetch, plan_jobs, write_plan
 
 
 class FakeClient:
@@ -21,6 +23,35 @@ class FakeClient:
 
 
 class Era5LandTests(unittest.TestCase):
+    def test_monthly_downloads_run_with_bounded_concurrency(self):
+        class ConcurrentClient(FakeClient):
+            def __init__(self):
+                super().__init__()
+                self.active = 0
+                self.maximum_active = 0
+                self.lock = Lock()
+
+            def retrieve(self, dataset, request, target):
+                with self.lock:
+                    self.active += 1
+                    self.maximum_active = max(self.maximum_active, self.active)
+                time.sleep(0.02)
+                super().retrieve(dataset, request, target)
+                with self.lock:
+                    self.active -= 1
+
+        client = ConcurrentClient()
+        with tempfile.TemporaryDirectory() as temporary:
+            outputs = fetch(
+                temporary,
+                BoundingBox(9.3, 46.1, 9.5, 46.2),
+                DateWindow(date(2025, 1, 1), date(2025, 6, 30)),
+                client=client,
+            )
+        self.assertEqual(len(outputs), 6)
+        self.assertGreater(client.maximum_active, 1)
+        self.assertLessEqual(client.maximum_active, MAX_PARALLEL_REQUESTS)
+
     def test_plan_splits_partial_window_by_month(self):
         jobs = plan_jobs(
             BoundingBox(8.5, 44.7, 10.2, 46.2),

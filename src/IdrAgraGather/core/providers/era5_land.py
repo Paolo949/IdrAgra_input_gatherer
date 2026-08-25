@@ -1,4 +1,5 @@
 import calendar
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import math
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ VARIABLES = (
 )
 TIMES = tuple(f"{hour:02d}:00" for hour in range(24))
 GRID_DEGREES = 0.1
+MAX_PARALLEL_REQUESTS = 6
 STAGED_RELATIVE_DIRECTORY = Path("raw/weather/era5_land")
 
 
@@ -30,6 +32,164 @@ class Era5Job:
     month: int
     target_name: str
     request: dict[str, Any]
+
+
+# Download monthly raw NetCDF files, resuming completed files.
+def fetch(
+    output_root: str | Path,
+    bbox: BoundingBox,
+    window: DateWindow,
+    *,
+    overwrite: bool = False,
+    client: Any | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+    on_progress: Callable[[int, int, Path], None] | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> list[Path]:
+    if client is None:
+        try:
+            import cdsapi
+        except ImportError as exc:
+            raise RuntimeError(
+                "ERA5 fetching requires the cdsapi package in QGIS and a configured %USERPROFILE%\\.cdsapirc file"
+            ) from exc
+        callback = _cds_log_callback(on_status)
+        client = cdsapi.Client(
+            quiet=True,
+            progress=False,
+            info_callback=callback,
+            warning_callback=callback,
+            error_callback=callback,
+            # Debug output can contain the CDS key in some client versions.
+            debug_callback=_ignore_cds_log,
+        )
+
+    root = Path(output_root).resolve()
+    destination_dir = root / STAGED_RELATIVE_DIRECTORY
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    manifest = Manifest(root)
+    manifest.configure(aoi=bbox.as_dict(), date_window=window.as_dict())
+
+    outputs: dict[int, Path] = {}
+    jobs = plan_jobs(bbox, window)
+    pending = []
+    for index, job in enumerate(jobs, start=1):
+        if is_cancelled is not None and is_cancelled():
+            break
+        destination = destination_dir / job.target_name
+        if destination.exists() and destination.stat().st_size > 0 and not overwrite:
+            outputs[index] = destination
+            manifest.add_asset(
+                destination,
+                category="weather",
+                provider="copernicus-cds",
+                dataset=DATASET,
+                source="https://cds.climate.copernicus.eu/",
+                request=job.request,
+            )
+            if on_progress is not None:
+                on_progress(index, len(jobs), destination)
+            continue
+        pending.append((index, job, destination))
+
+    worker_count = min(MAX_PARALLEL_REQUESTS, len(pending))
+    if worker_count:
+        if on_status is not None and worker_count > 1:
+            on_status(f"Submitting up to {worker_count} ERA5-Land monthly jobs concurrently.")
+        with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="era5") as executor:
+            futures = {
+                executor.submit(_download_job, client, job, destination, is_cancelled, on_status): (index, job, destination)
+                for index, job, destination in pending
+            }
+            for future in as_completed(futures):
+                index, job, destination = futures[future]
+                if not future.result():
+                    continue
+                outputs[index] = destination
+                manifest.add_asset(
+                    destination,
+                    category="weather",
+                    provider="copernicus-cds",
+                    dataset=DATASET,
+                    source="https://cds.climate.copernicus.eu/",
+                    request=job.request,
+                )
+                if on_progress is not None:
+                    on_progress(len(outputs), len(jobs), destination)
+    return [outputs[index] for index in sorted(outputs)]
+
+
+# Download one monthly job without mutating shared manifest state.
+def _download_job(client, job, destination, is_cancelled, on_status) -> bool:
+    if is_cancelled is not None and is_cancelled():
+        return False
+    partial = destination.with_suffix(destination.suffix + ".part")
+    # A forced QGIS shutdown can leave an incomplete file from an earlier
+    # attempt. It is not a verified resumable asset, so start clean.
+    partial.unlink(missing_ok=True)
+    try:
+        if on_status is not None:
+            on_status(f"Submitting ERA5-Land job for {job.year}-{job.month:02d}.")
+        client.retrieve(DATASET, job.request, str(partial))
+        if is_cancelled is not None and is_cancelled():
+            partial.unlink(missing_ok=True)
+            return False
+        if not partial.exists() or partial.stat().st_size == 0:
+            raise RuntimeError(f"CDS did not produce {partial}")
+        partial.replace(destination)
+        return True
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
+
+
+# Adapt logging-style CDS callbacks without writing to QGIS console streams.
+def _cds_log_callback(on_status: Callable[[str], None] | None):
+    def report(message, *args, **_kwargs):
+        if on_status is None:
+            return
+        try:
+            text = str(message) % args if args else str(message)
+        except (TypeError, ValueError):
+            text = " ".join(str(item) for item in (message, *args))
+        if text.strip():
+            on_status(text.strip())
+
+    return report
+
+
+def _ignore_cds_log(*_args, **_kwargs):
+    pass
+
+
+# Write the exact CDS jobs so the QGIS prototype can run without credentials.
+def write_plan(
+    output_root: str | Path,
+    bbox: BoundingBox,
+    window: DateWindow,
+) -> Path:
+    root = Path(output_root).resolve()
+    output = root / STAGED_RELATIVE_DIRECTORY / "era5_plan.json"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    jobs = plan_jobs(bbox, window)
+    payload = {
+        "dataset": DATASET,
+        "aoi": bbox.as_dict(),
+        "date_window": window.as_dict(),
+        "jobs": [{"target": job.target_name, "request": job.request} for job in jobs],
+    }
+    output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    manifest = Manifest(root)
+    manifest.configure(aoi=bbox.as_dict(), date_window=window.as_dict())
+    manifest.add_asset(
+        output,
+        category="weather",
+        provider="copernicus-cds",
+        dataset=DATASET,
+        source="https://cds.climate.copernicus.eu/",
+        request={"mode": "plan-only", "job_count": len(jobs)},
+    )
+    return output
 
 
 def plan_jobs(
@@ -73,144 +233,6 @@ def plan_jobs(
     return jobs
 
 
-def fetch(
-    output_root: str | Path,
-    bbox: BoundingBox,
-    window: DateWindow,
-    *,
-    overwrite: bool = False,
-    client: Any | None = None,
-    is_cancelled: Callable[[], bool] | None = None,
-    on_progress: Callable[[int, int, Path], None] | None = None,
-    on_status: Callable[[str], None] | None = None,
-) -> list[Path]:
-    """Download monthly raw NetCDF files, resuming completed files."""
-
-    if client is None:
-        try:
-            import cdsapi
-        except ImportError as exc:
-            raise RuntimeError(
-                "ERA5 fetching requires the cdsapi package in QGIS and a "
-                "configured %USERPROFILE%\\.cdsapirc file"
-            ) from exc
-        callback = _cds_log_callback(on_status)
-        client = cdsapi.Client(
-            quiet=True,
-            progress=False,
-            info_callback=callback,
-            warning_callback=callback,
-            error_callback=callback,
-            # Debug output can contain the CDS key in some client versions.
-            debug_callback=_ignore_cds_log,
-        )
-
-    root = Path(output_root).resolve()
-    destination_dir = root / STAGED_RELATIVE_DIRECTORY
-    destination_dir.mkdir(parents=True, exist_ok=True)
-    manifest = Manifest(root)
-    manifest.configure(aoi=bbox.as_dict(), date_window=window.as_dict())
-
-    outputs: list[Path] = []
-    jobs = plan_jobs(bbox, window)
-    for index, job in enumerate(jobs, start=1):
-        if is_cancelled is not None and is_cancelled():
-            break
-        destination = destination_dir / job.target_name
-        if destination.exists() and destination.stat().st_size > 0 and not overwrite:
-            outputs.append(destination)
-            manifest.add_asset(
-                destination,
-                category="weather",
-                provider="copernicus-cds",
-                dataset=DATASET,
-                source="https://cds.climate.copernicus.eu/",
-                request=job.request,
-            )
-            if on_progress is not None:
-                on_progress(index, len(jobs), destination)
-            continue
-
-        partial = destination.with_suffix(destination.suffix + ".part")
-        # A forced QGIS shutdown can leave an incomplete file from an earlier
-        # attempt. It is not a verified resumable asset, so start clean.
-        partial.unlink(missing_ok=True)
-        try:
-            if on_status is not None:
-                on_status(f"Submitting ERA5-Land job for {job.year}-{job.month:02d}.")
-            client.retrieve(DATASET, job.request, str(partial))
-            if not partial.exists() or partial.stat().st_size == 0:
-                raise RuntimeError(f"CDS did not produce {partial}")
-            partial.replace(destination)
-        except Exception:
-            partial.unlink(missing_ok=True)
-            raise
-
-        manifest.add_asset(
-            destination,
-            category="weather",
-            provider="copernicus-cds",
-            dataset=DATASET,
-            source="https://cds.climate.copernicus.eu/",
-            request=job.request,
-        )
-        outputs.append(destination)
-        if on_progress is not None:
-            on_progress(index, len(jobs), destination)
-    return outputs
-
-
-def _cds_log_callback(on_status: Callable[[str], None] | None):
-    """Adapt logging-style CDS callbacks without writing to QGIS console streams."""
-
-    def report(message, *args, **_kwargs):
-        if on_status is None:
-            return
-        try:
-            text = str(message) % args if args else str(message)
-        except (TypeError, ValueError):
-            text = " ".join(str(item) for item in (message, *args))
-        if text.strip():
-            on_status(text.strip())
-
-    return report
-
-
-def _ignore_cds_log(*_args, **_kwargs):
-    pass
-
-
-def write_plan(
-    output_root: str | Path,
-    bbox: BoundingBox,
-    window: DateWindow,
-) -> Path:
-    """Write the exact CDS jobs so the QGIS prototype can run without credentials."""
-
-    root = Path(output_root).resolve()
-    output = root / STAGED_RELATIVE_DIRECTORY / "era5_plan.json"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    jobs = plan_jobs(bbox, window)
-    payload = {
-        "dataset": DATASET,
-        "aoi": bbox.as_dict(),
-        "date_window": window.as_dict(),
-        "jobs": [{"target": job.target_name, "request": job.request} for job in jobs],
-    }
-    output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    manifest = Manifest(root)
-    manifest.configure(aoi=bbox.as_dict(), date_window=window.as_dict())
-    manifest.add_asset(
-        output,
-        category="weather",
-        provider="copernicus-cds",
-        dataset=DATASET,
-        source="https://cds.climate.copernicus.eu/",
-        request={"mode": "plan-only", "job_count": len(jobs)},
-    )
-    return output
-
-
 def _months(start: date, end: date):
     year, month = start.year, start.month
     while (year, month) <= (end.year, end.month):
@@ -221,9 +243,8 @@ def _months(start: date, end: date):
             month += 1
 
 
+# Return a grid-aligned request extent that fully contains *bbox*.
 def _snap_bbox_outward(bbox: BoundingBox, grid: float) -> BoundingBox:
-    """Return a grid-aligned request extent that fully contains *bbox*."""
-
     if grid <= 0:
         raise ValueError("grid spacing must be positive")
 

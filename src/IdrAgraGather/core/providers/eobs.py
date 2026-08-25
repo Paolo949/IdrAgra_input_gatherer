@@ -13,6 +13,8 @@ from ..models import BoundingBox, DateWindow
 DATASET = "E-OBS daily gridded observations"
 VERSION = "33.0e"
 GRID_RESOLUTION = "0.1deg"
+GRID_DEGREES = 0.1
+SPATIAL_BUFFER_CELLS = 1
 BASE_URL = "https://knmi-ecad-assets-prd.s3.amazonaws.com/ensembles/data"
 FINAL_PERIODS = ((1950, 1964), (1965, 1979), (1980, 1994), (1995, 2010), (2011, 2025))
 VARIABLES = ("tn", "tx", "rr", "hu", "fg", "qq")
@@ -30,71 +32,7 @@ class EobsJob:
     provisional: bool = False
 
 
-def plan_jobs(
-    bbox: BoundingBox,
-    window: DateWindow,
-    *,
-    variables: Iterable[str] = VARIABLES,
-    today: date | None = None,
-) -> list[EobsJob]:
-    selected = tuple(dict.fromkeys(variables))
-    unknown = sorted(set(selected) - set(VARIABLES))
-    if unknown:
-        raise ValueError(f"unsupported E-OBS variables: {', '.join(unknown)}")
-    if not selected:
-        raise ValueError("at least one E-OBS variable is required")
-    if window.start.year < EARLIEST_COMPLETE_YEAR:
-        raise ValueError(
-            "E-OBS wind speed starts in 1980; choose a period beginning in 1980 "
-            "or later for a complete IdrAgra weather dataset."
-        )
-
-    current_year = (today or date.today()).year
-    periods: list[tuple[str, bool]] = []
-    for first, last in FINAL_PERIODS:
-        if window.start.year <= last and window.end.year >= first:
-            periods.append((f"{first}-{last}", False))
-
-    if window.end.year > FINAL_PERIODS[-1][1]:
-        if window.start.year <= current_year <= window.end.year:
-            periods.append((str(current_year), True))
-        unsupported = [
-            year
-            for year in range(max(window.start.year, FINAL_PERIODS[-1][1] + 1), window.end.year + 1)
-            if year != current_year
-        ]
-        if unsupported:
-            raise ValueError(
-                "E-OBS finalized v33.0e ends in 2025, and only the running-year "
-                f"provisional file is available after that (unsupported: {unsupported[0]})."
-            )
-
-    jobs: list[EobsJob] = []
-    for period, provisional in periods:
-        for variable in selected:
-            if provisional:
-                target_name = f"{variable}_0.1deg_day_{period}_grid_ensmean.nc"
-                url = f"{BASE_URL}/months/ens/{target_name}"
-            else:
-                target_name = (
-                    f"{variable}_ens_mean_0.1deg_reg_{period}_v{VERSION}.nc"
-                )
-                url = (
-                    f"{BASE_URL}/Grid_0.1deg_reg_ensemble/{target_name}"
-                )
-            signature = hashlib.sha256(
-                (
-                    f"{bbox.west},{bbox.south},{bbox.east},{bbox.north}|"
-                    f"{window.start}|{window.end}"
-                ).encode("ascii")
-            ).hexdigest()[:12]
-            local_name = f"{variable}_{period}_{signature}.nc"
-            jobs.append(EobsJob(variable, period, local_name, url, provisional))
-    if not jobs:
-        raise ValueError("the requested dates are outside the supported E-OBS periods")
-    return jobs
-
-
+# Save AOI/date subsets using range reads against official NetCDF files.
 def fetch(
     output_root: str | Path,
     bbox: BoundingBox,
@@ -106,8 +44,6 @@ def fetch(
     on_status: Callable[[str], None] | None = None,
     subsetter=None,
 ) -> list[Path]:
-    """Save AOI/date subsets using range reads against official NetCDF files."""
-
     root = Path(output_root).resolve()
     destination_dir = root / "raw" / "weather" / "eobs"
     destination_dir.mkdir(parents=True, exist_ok=True)
@@ -116,6 +52,7 @@ def fetch(
         subsetter = _subset_remote_job
     manifest = Manifest(root)
     manifest.configure(aoi=bbox.as_dict(), date_window=window.as_dict())
+    subset_west, subset_south, subset_east, subset_north = _buffered_grid_bounds(bbox)
     outputs: list[Path] = []
 
     for index, job in enumerate(jobs, start=1):
@@ -124,22 +61,14 @@ def fetch(
         destination = destination_dir / job.target_name
         # Running-year files are replaced on each monthly update, so refresh
         # them rather than silently treating a stale copy as finalized data.
-        reusable = (
-            destination.exists()
-            and destination.stat().st_size > 0
-            and not overwrite
-            and not job.provisional
-        )
+        reusable = destination.exists() and destination.stat().st_size > 0 and not overwrite and not job.provisional
         if reusable:
             if on_status is not None:
                 qualifier = "provisional " if job.provisional else ""
                 on_status(f"Reusing {qualifier}{job.variable.upper()} {job.period}.")
         else:
             if on_status is not None:
-                on_status(
-                    f"Reading and saving the {job.variable.upper()} {job.period} "
-                    f"AOI/date subset ({index}/{len(jobs)})."
-                )
+                on_status(f"Reading and saving the {job.variable.upper()} {job.period} AOI/date subset ({index}/{len(jobs)}).")
             partial = destination.with_suffix(destination.suffix + ".part")
             partial.unlink(missing_ok=True)
             try:
@@ -164,6 +93,14 @@ def fetch(
                 "variable": job.variable,
                 "period": job.period,
                 "grid_resolution": GRID_RESOLUTION,
+                "spatial_buffer_grid_cells": SPATIAL_BUFFER_CELLS,
+                "subset_bbox": {
+                    "crs": "EPSG:4326",
+                    "west": subset_west,
+                    "south": subset_south,
+                    "east": subset_east,
+                    "north": subset_north,
+                },
                 "provisional": job.provisional,
                 "requested_bbox": bbox.as_dict(),
                 "requested_window": window.as_dict(),
@@ -173,6 +110,62 @@ def fetch(
         if on_progress is not None:
             on_progress(index, len(jobs), destination)
     return outputs
+
+
+def plan_jobs(
+    bbox: BoundingBox,
+    window: DateWindow,
+    *,
+    variables: Iterable[str] = VARIABLES,
+    today: date | None = None,
+) -> list[EobsJob]:
+    selected = tuple(dict.fromkeys(variables))
+    unknown = sorted(set(selected) - set(VARIABLES))
+    if unknown:
+        raise ValueError(f"unsupported E-OBS variables: {', '.join(unknown)}")
+    if not selected:
+        raise ValueError("at least one E-OBS variable is required")
+    if window.start.year < EARLIEST_COMPLETE_YEAR:
+        raise ValueError(
+            "E-OBS wind speed starts in 1980; choose a period beginning in 1980 or later for a complete IdrAgra weather dataset."
+        )
+
+    current_year = (today or date.today()).year
+    periods: list[tuple[str, bool]] = []
+    for first, last in FINAL_PERIODS:
+        if window.start.year <= last and window.end.year >= first:
+            periods.append((f"{first}-{last}", False))
+
+    if window.end.year > FINAL_PERIODS[-1][1]:
+        if window.start.year <= current_year <= window.end.year:
+            periods.append((str(current_year), True))
+        unsupported = [
+            year for year in range(max(window.start.year, FINAL_PERIODS[-1][1] + 1), window.end.year + 1) if year != current_year
+        ]
+        if unsupported:
+            raise ValueError(
+                "E-OBS finalized v33.0e ends in 2025, and only the running-year "
+                f"provisional file is available after that (unsupported: {unsupported[0]})."
+            )
+
+    jobs: list[EobsJob] = []
+    subset_bounds = _buffered_grid_bounds(bbox)
+    for period, provisional in periods:
+        for variable in selected:
+            if provisional:
+                target_name = f"{variable}_0.1deg_day_{period}_grid_ensmean.nc"
+                url = f"{BASE_URL}/months/ens/{target_name}"
+            else:
+                target_name = f"{variable}_ens_mean_0.1deg_reg_{period}_v{VERSION}.nc"
+                url = f"{BASE_URL}/Grid_0.1deg_reg_ensemble/{target_name}"
+            signature = hashlib.sha256(
+                (f"{subset_bounds}|{window.start}|{window.end}|buffer={SPATIAL_BUFFER_CELLS}").encode("ascii")
+            ).hexdigest()[:12]
+            local_name = f"{variable}_{period}_{signature}.nc"
+            jobs.append(EobsJob(variable, period, local_name, url, provisional))
+    if not jobs:
+        raise ValueError("the requested dates are outside the supported E-OBS periods")
+    return jobs
 
 
 def _subset_remote_job(
@@ -190,10 +183,7 @@ def _subset_remote_job(
     gdal.UseExceptions()
     source = "/vsicurl/" + job.url
     first, last = _job_date_intersection(job, window)
-    west = math.floor((bbox.west + 1e-12) * 10.0) / 10.0
-    south = math.floor((bbox.south + 1e-12) * 10.0) / 10.0
-    east = math.ceil((bbox.east - 1e-12) * 10.0) / 10.0
-    north = math.ceil((bbox.north - 1e-12) * 10.0) / 10.0
+    west, south, east, north = _buffered_grid_bounds(bbox)
     origin = date(1950, 1, 1)
     time_start = (first - origin).days
     time_end = (last - origin).days
@@ -235,6 +225,27 @@ def _subset_remote_job(
     if result is None and not (is_cancelled is not None and is_cancelled()):
         raise RuntimeError(f"GDAL could not subset E-OBS source {job.url}")
     result = None
+
+
+# Return the outward-snapped AOI plus one surrounding E-OBS grid cell on every side.
+def _buffered_grid_bounds(bbox: BoundingBox) -> tuple[float, float, float, float]:
+    west_index = math.floor((bbox.west + 1e-12) / GRID_DEGREES)
+    south_index = math.floor((bbox.south + 1e-12) / GRID_DEGREES)
+    east_index = math.ceil((bbox.east - 1e-12) / GRID_DEGREES)
+    north_index = math.ceil((bbox.north - 1e-12) / GRID_DEGREES)
+    if abs(west_index * GRID_DEGREES - bbox.west) <= 1e-9:
+        west_index -= SPATIAL_BUFFER_CELLS
+    if abs(south_index * GRID_DEGREES - bbox.south) <= 1e-9:
+        south_index -= SPATIAL_BUFFER_CELLS
+    if abs(east_index * GRID_DEGREES - bbox.east) <= 1e-9:
+        east_index += SPATIAL_BUFFER_CELLS
+    if abs(north_index * GRID_DEGREES - bbox.north) <= 1e-9:
+        north_index += SPATIAL_BUFFER_CELLS
+    west = max(-180.0, round(west_index * GRID_DEGREES, 1))
+    south = max(-90.0, round(south_index * GRID_DEGREES, 1))
+    east = min(180.0, round(east_index * GRID_DEGREES, 1))
+    north = min(90.0, round(north_index * GRID_DEGREES, 1))
+    return west, south, east, north
 
 
 def _job_date_intersection(job: EobsJob, window: DateWindow) -> tuple[date, date]:

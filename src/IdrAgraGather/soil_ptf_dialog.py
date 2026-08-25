@@ -59,15 +59,9 @@ class SoilPtfDialog(QDialog):
         layout.addWidget(self._build_method_group())
 
         field_row = QHBoxLayout()
-        self.required_table = self._field_panel(
-            field_row, "Required inputs", "#d7eafa"
-        )
-        self.generated_table = self._field_panel(
-            field_row, "Generated outputs", "#d9f2df"
-        )
-        self.unused_table = self._field_panel(
-            field_row, "Available but unused", "#e6e6e6"
-        )
+        self.required_table = self._field_panel(field_row, "Required inputs", "#d7eafa")
+        self.generated_table = self._field_panel(field_row, "Generated outputs", "#d9f2df")
+        self.unused_table = self._field_panel(field_row, "Available but unused", "#e6e6e6")
         layout.addLayout(field_row, 1)
 
         self.method_note = QLabel()
@@ -114,9 +108,7 @@ class SoilPtfDialog(QDialog):
         layout = QFormLayout(group)
         self.method_combo = QComboBox()
         self.method_combo.addItem("Rosetta 3", "rosetta3")
-        self.use_bulk_density = QCheckBox(
-            "Use bulk density (H3; recommended when density is reliable)"
-        )
+        self.use_bulk_density = QCheckBox("Use bulk density (H3; recommended when density is reliable)")
         self.use_bulk_density.setChecked(True)
         layout.addRow("Method", self.method_combo)
         layout.addRow("Hierarchy", self.use_bulk_density)
@@ -128,10 +120,7 @@ class SoilPtfDialog(QDialog):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         header = QLabel(title)
-        header.setStyleSheet(
-            f"background-color: {color}; border: 1px solid #9a9a9a; "
-            "font-weight: 600; padding: 5px;"
-        )
+        header.setStyleSheet(f"background-color: {color}; border: 1px solid #9a9a9a; font-weight: 600; padding: 5px;")
         table = QTableWidget(0, 2)
         table.setHorizontalHeaderLabels(("Field", "Unit"))
         table.horizontalHeader().setSectionResizeMode(0, RESIZE_MODE.Stretch)
@@ -143,21 +132,6 @@ class SoilPtfDialog(QDialog):
         layout.addWidget(table, 1)
         parent_layout.addWidget(panel, 1)
         return table
-
-    def set_workspace(self, path):
-        self.workspace_edit.setText(str(path or ""))
-        self.refresh_status()
-
-    def refresh_status(self):
-        text = self.workspace_edit.text().strip()
-        if not text:
-            self.input_status.setText("Choose a gathered-input workspace.")
-            return
-        source = Path(text) / "soil" / "soil_profiles.gpkg"
-        if not source.is_file():
-            self.input_status.setText(f"Missing: {source}")
-            return
-        self.input_status.setText(f"Ready: {source}")
 
     def _update_method_view(self):
         use_density = self.use_bulk_density.isChecked()
@@ -184,11 +158,24 @@ class SoilPtfDialog(QDialog):
             table.setItem(row, 1, unit_item)
 
     def _browse_workspace(self):
-        folder = QFileDialog.getExistingDirectory(
-            self, "Choose gathered-input workspace", self.workspace_edit.text().strip()
-        )
+        folder = QFileDialog.getExistingDirectory(self, "Choose gathered-input workspace", self.workspace_edit.text().strip())
         if folder:
             self.set_workspace(folder)
+
+    def set_workspace(self, path):
+        self.workspace_edit.setText(str(path or ""))
+        self.refresh_status()
+
+    def refresh_status(self):
+        text = self.workspace_edit.text().strip()
+        if not text:
+            self.input_status.setText("Choose a gathered-input workspace.")
+            return
+        source = Path(text) / "soil" / "soil_profiles.gpkg"
+        if not source.is_file():
+            self.input_status.setText(f"Missing: {source}")
+            return
+        self.input_status.setText(f"Ready: {source}")
 
     def _emit_request(self):
         try:

@@ -23,22 +23,6 @@ class Manifest:
         self.root = root.resolve()
         self.path = self.root / "manifest.json"
 
-    def read(self) -> dict[str, Any]:
-        if not self.path.exists():
-            return {
-                "schema_version": SCHEMA_VERSION,
-                "created_at": _now(),
-                "aoi": None,
-                "date_window": None,
-                "assets": [],
-            }
-        data = json.loads(self.path.read_text(encoding="utf-8"))
-        if data.get("schema_version") != SCHEMA_VERSION:
-            raise ValueError(
-                f"unsupported manifest schema: {data.get('schema_version')!r}"
-            )
-        return data
-
     def configure(
         self,
         *,
@@ -87,23 +71,32 @@ class Manifest:
         data["assets"].sort(key=lambda item: item["path"])
         self._write(data)
 
+    # Forget assets that were intentionally removed or superseded.
     def remove_assets(self, paths) -> None:
-        """Forget assets that were intentionally removed or superseded."""
-
         relative_paths = set()
         for path in paths:
             resolved = Path(path).resolve()
             try:
                 relative_paths.add(resolved.relative_to(self.root).as_posix())
             except ValueError as exc:
-                raise ValueError(
-                    "manifest assets must be inside the staging directory"
-                ) from exc
+                raise ValueError("manifest assets must be inside the staging directory") from exc
         data = self.read()
-        data["assets"] = [
-            item for item in data["assets"] if item["path"] not in relative_paths
-        ]
+        data["assets"] = [item for item in data["assets"] if item["path"] not in relative_paths]
         self._write(data)
+
+    def read(self) -> dict[str, Any]:
+        if not self.path.exists():
+            return {
+                "schema_version": SCHEMA_VERSION,
+                "created_at": _now(),
+                "aoi": None,
+                "date_window": None,
+                "assets": [],
+            }
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        if data.get("schema_version") != SCHEMA_VERSION:
+            raise ValueError(f"unsupported manifest schema: {data.get('schema_version')!r}")
+        return data
 
     def _write(self, data: dict[str, Any]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)

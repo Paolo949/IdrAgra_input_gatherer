@@ -32,33 +32,6 @@ class SoilGridsJob:
         return f"{self.coverage_id}.tif"
 
 
-def plan_jobs(
-    bbox: BoundingBox,
-    *,
-    properties: Iterable[str] = PROPERTIES,
-) -> list[SoilGridsJob]:
-    jobs = []
-    for property_name in properties:
-        if property_name not in PROPERTIES:
-            raise ValueError(f"unsupported SoilGrids property: {property_name}")
-        for depth in DEPTHS:
-            coverage_id = f"{property_name}_{depth}_mean"
-            query = [
-                ("map", f"/map/{property_name}.map"),
-                ("SERVICE", "WCS"),
-                ("VERSION", "2.0.1"),
-                ("REQUEST", "GetCoverage"),
-                ("COVERAGEID", coverage_id),
-                ("FORMAT", "GEOTIFF_INT16"),
-                ("SUBSET", f"X({bbox.west},{bbox.east})"),
-                ("SUBSET", f"Y({bbox.south},{bbox.north})"),
-                ("SUBSETTINGCRS", WGS84_URI),
-                ("OUTPUTCRS", SOILGRIDS_URI),
-            ]
-            jobs.append(SoilGridsJob(property_name, depth, BASE_URL + "?" + urlencode(query)))
-    return jobs
-
-
 def fetch(
     root: str | Path,
     bbox: BoundingBox,
@@ -109,8 +82,7 @@ def fetch(
             provider="isric-soilgrids-wcs",
             dataset=job.coverage_id,
             source=job.url,
-            request={"bbox": bbox.as_dict(), "property": job.property_name,
-                     "depth": job.depth, "statistic": "mean"},
+            request={"bbox": bbox.as_dict(), "property": job.property_name, "depth": job.depth, "statistic": "mean"},
         )
         outputs.append(target)
         if on_progress:
@@ -118,13 +90,38 @@ def fetch(
     return outputs
 
 
+def plan_jobs(
+    bbox: BoundingBox,
+    *,
+    properties: Iterable[str] = PROPERTIES,
+) -> list[SoilGridsJob]:
+    jobs = []
+    for property_name in properties:
+        if property_name not in PROPERTIES:
+            raise ValueError(f"unsupported SoilGrids property: {property_name}")
+        for depth in DEPTHS:
+            coverage_id = f"{property_name}_{depth}_mean"
+            query = [
+                ("map", f"/map/{property_name}.map"),
+                ("SERVICE", "WCS"),
+                ("VERSION", "2.0.1"),
+                ("REQUEST", "GetCoverage"),
+                ("COVERAGEID", coverage_id),
+                ("FORMAT", "GEOTIFF_INT16"),
+                ("SUBSET", f"X({bbox.west},{bbox.east})"),
+                ("SUBSET", f"Y({bbox.south},{bbox.north})"),
+                ("SUBSETTINGCRS", WGS84_URI),
+                ("OUTPUTCRS", SOILGRIDS_URI),
+            ]
+            jobs.append(SoilGridsJob(property_name, depth, BASE_URL + "?" + urlencode(query)))
+    return jobs
+
+
+# Embed the published SoilGrids CRS when a WCS TIFF omits it.
+#
+# Returns ``True`` only when the file was changed. GDAL remains an optional
+# dependency for the acquisition core; the QGIS plugin always provides it.
 def ensure_raster_crs(path: str | Path) -> bool:
-    """Embed the published SoilGrids CRS when a WCS TIFF omits it.
-
-    Returns ``True`` only when the file was changed. GDAL remains an optional
-    dependency for the acquisition core; the QGIS plugin always provides it.
-    """
-
     try:
         from osgeo import gdal, osr
 

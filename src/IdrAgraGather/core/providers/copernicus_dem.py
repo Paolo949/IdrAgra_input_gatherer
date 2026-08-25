@@ -14,10 +14,7 @@ from ..models import BoundingBox
 
 
 PROCESS_URL = "https://sh.dataspace.copernicus.eu/process/v1"
-TOKEN_URL = (
-    "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/"
-    "protocol/openid-connect/token"
-)
+TOKEN_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
 PROVIDER = "copernicus-dem-sentinel-hub"
 DATASET_DOI = "https://doi.org/10.5270/ESA-c5d3d65"
 DATASET_PAGE = (
@@ -72,9 +69,7 @@ class CopernicusDemJob:
         return {
             "input": {
                 "bounds": {
-                    "properties": {
-                        "crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"
-                    },
+                    "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"},
                     "bbox": [
                         self.bbox.west,
                         self.bbox.south,
@@ -97,107 +92,13 @@ class CopernicusDemJob:
             "output": {
                 "width": self.width,
                 "height": self.height,
-                "responses": [
-                    {"identifier": "default", "format": {"type": "image/tiff"}}
-                ],
+                "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}],
             },
             "evalscript": EVALSCRIPT,
         }
 
 
-def plan_jobs(
-    bbox: BoundingBox,
-    *,
-    instance: str = "COPERNICUS_30",
-    max_tile_pixels: int = MAX_TILE_PIXELS,
-) -> list[CopernicusDemJob]:
-    """Split an AOI into Process API requests at the DEM's native grid spacing."""
-
-    if instance not in INSTANCES:
-        raise ValueError(f"unsupported Copernicus DEM instance: {instance}")
-    if max_tile_pixels < 1:
-        raise ValueError("max_tile_pixels must be positive")
-    resolution = INSTANCES[instance]["resolution_degrees"]
-    total_width = max(1, math.ceil((bbox.east - bbox.west) / resolution))
-    total_height = max(1, math.ceil((bbox.north - bbox.south) / resolution))
-    acquisition_id = _acquisition_id(bbox, instance)
-    jobs = []
-    row_count = math.ceil(total_height / max_tile_pixels)
-    column_count = math.ceil(total_width / max_tile_pixels)
-    for row in range(row_count):
-        top_pixel = row * max_tile_pixels
-        tile_height = min(max_tile_pixels, total_height - top_pixel)
-        north = bbox.north - top_pixel * resolution
-        south = (
-            bbox.south
-            if row == row_count - 1
-            else bbox.north - (top_pixel + tile_height) * resolution
-        )
-        for column in range(column_count):
-            left_pixel = column * max_tile_pixels
-            tile_width = min(max_tile_pixels, total_width - left_pixel)
-            west = bbox.west + left_pixel * resolution
-            east = (
-                bbox.east
-                if column == column_count - 1
-                else bbox.west + (left_pixel + tile_width) * resolution
-            )
-            jobs.append(
-                CopernicusDemJob(
-                    row + 1,
-                    column + 1,
-                    BoundingBox(west, south, east, north),
-                    tile_width,
-                    tile_height,
-                    instance,
-                    acquisition_id,
-                )
-            )
-    return jobs
-
-
-def fetch_access_token(
-    client_id: str | None = None,
-    client_secret: str | None = None,
-    *,
-    opener=urlopen,
-) -> str:
-    """Exchange a CDSE Sentinel Hub OAuth client for one reusable access token."""
-
-    client_id = (client_id or os.environ.get("SH_CLIENT_ID") or "").strip()
-    client_secret = (client_secret or os.environ.get("SH_CLIENT_SECRET") or "").strip()
-    if not client_id or not client_secret:
-        raise ValueError(
-            "Copernicus DEM acquisition requires a Sentinel Hub OAuth client ID and "
-            "secret (enter them in the dialog or set SH_CLIENT_ID and SH_CLIENT_SECRET)."
-        )
-    body = urlencode(
-        {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        }
-    ).encode("utf-8")
-    request = Request(
-        TOKEN_URL,
-        data=body,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "IdrAgraGather/0.11",
-        },
-        method="POST",
-    )
-    try:
-        with opener(request, timeout=60) as response:
-            payload = json.load(response)
-    except HTTPError as exc:
-        raise RuntimeError(_http_error("Copernicus authentication failed", exc)) from exc
-    token = payload.get("access_token")
-    if not isinstance(token, str) or not token:
-        raise RuntimeError("Copernicus authentication returned no access token.")
-    return token
-
-
+# Download an AOI-clipped orthometric Copernicus DEM as tiled GeoTIFFs.
 def fetch(
     root: str | Path,
     bbox: BoundingBox,
@@ -212,17 +113,9 @@ def fetch(
     opener=urlopen,
     token_opener=urlopen,
 ) -> list[Path]:
-    """Download an AOI-clipped orthometric Copernicus DEM as tiled GeoTIFFs."""
-
     jobs = plan_jobs(bbox, instance=instance)
     root_path = Path(root).resolve()
-    output_dir = (
-        root_path
-        / "raw"
-        / "topography"
-        / "copernicus_dem"
-        / jobs[0].acquisition_id
-    )
+    output_dir = root_path / "raw" / "topography" / "copernicus_dem" / jobs[0].acquisition_id
     output_dir.mkdir(parents=True, exist_ok=True)
     token = access_token
     manifest = Manifest(root_path)
@@ -259,20 +152,14 @@ def fetch(
             temporary = target.with_suffix(".tif.part")
             try:
                 try:
-                    with opener(request, timeout=300) as response, temporary.open(
-                        "wb"
-                    ) as stream:
+                    with opener(request, timeout=300) as response, temporary.open("wb") as stream:
                         content_type = response.headers.get("Content-Type", "")
                         if "json" in content_type.lower() or "text" in content_type.lower():
                             detail = response.read(4096).decode("utf-8", errors="replace")
-                            raise RuntimeError(
-                                f"Copernicus DEM service returned {content_type}: {detail}"
-                            )
+                            raise RuntimeError(f"Copernicus DEM service returned {content_type}: {detail}")
                         shutil.copyfileobj(response, stream)
                 except HTTPError as exc:
-                    raise RuntimeError(
-                        _http_error("Copernicus DEM request failed", exc)
-                    ) from exc
+                    raise RuntimeError(_http_error("Copernicus DEM request failed", exc)) from exc
                 if not _is_tiff(temporary):
                     raise RuntimeError("Copernicus DEM response was not a GeoTIFF.")
                 temporary.replace(target)
@@ -307,14 +194,54 @@ def fetch(
     return outputs
 
 
+# Exchange a CDSE Sentinel Hub OAuth client for one reusable access token.
+def fetch_access_token(
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    *,
+    opener=urlopen,
+) -> str:
+    client_id = (client_id or os.environ.get("SH_CLIENT_ID") or "").strip()
+    client_secret = (client_secret or os.environ.get("SH_CLIENT_SECRET") or "").strip()
+    if not client_id or not client_secret:
+        raise ValueError(
+            "Copernicus DEM acquisition requires a Sentinel Hub OAuth client ID and "
+            "secret (enter them in the dialog or set SH_CLIENT_ID and SH_CLIENT_SECRET)."
+        )
+    body = urlencode(
+        {
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+    ).encode("utf-8")
+    request = Request(
+        TOKEN_URL,
+        data=body,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "IdrAgraGather/0.11",
+        },
+        method="POST",
+    )
+    try:
+        with opener(request, timeout=60) as response:
+            payload = json.load(response)
+    except HTTPError as exc:
+        raise RuntimeError(_http_error("Copernicus authentication failed", exc)) from exc
+    token = payload.get("access_token")
+    if not isinstance(token, str) or not token:
+        raise RuntimeError("Copernicus authentication returned no access token.")
+    return token
+
+
+# Locate the complete staged tile set for this AOI and DEM instance.
 def find_tiles(
     root: str | Path,
     bbox: BoundingBox,
     *,
     instance: str = "COPERNICUS_30",
 ) -> tuple[Path, ...]:
-    """Locate the complete staged tile set for this AOI and DEM instance."""
-
     root_path = Path(root).resolve()
     expected = {job.target_name for job in plan_jobs(bbox, instance=instance)}
     acquisition_id = _acquisition_id(bbox, instance)
@@ -329,13 +256,52 @@ def find_tiles(
     return paths
 
 
+# Split an AOI into Process API requests at the DEM's native grid spacing.
+def plan_jobs(
+    bbox: BoundingBox,
+    *,
+    instance: str = "COPERNICUS_30",
+    max_tile_pixels: int = MAX_TILE_PIXELS,
+) -> list[CopernicusDemJob]:
+    if instance not in INSTANCES:
+        raise ValueError(f"unsupported Copernicus DEM instance: {instance}")
+    if max_tile_pixels < 1:
+        raise ValueError("max_tile_pixels must be positive")
+    resolution = INSTANCES[instance]["resolution_degrees"]
+    total_width = max(1, math.ceil((bbox.east - bbox.west) / resolution))
+    total_height = max(1, math.ceil((bbox.north - bbox.south) / resolution))
+    acquisition_id = _acquisition_id(bbox, instance)
+    jobs = []
+    row_count = math.ceil(total_height / max_tile_pixels)
+    column_count = math.ceil(total_width / max_tile_pixels)
+    for row in range(row_count):
+        top_pixel = row * max_tile_pixels
+        tile_height = min(max_tile_pixels, total_height - top_pixel)
+        north = bbox.north - top_pixel * resolution
+        south = bbox.south if row == row_count - 1 else bbox.north - (top_pixel + tile_height) * resolution
+        for column in range(column_count):
+            left_pixel = column * max_tile_pixels
+            tile_width = min(max_tile_pixels, total_width - left_pixel)
+            west = bbox.west + left_pixel * resolution
+            east = bbox.east if column == column_count - 1 else bbox.west + (left_pixel + tile_width) * resolution
+            jobs.append(
+                CopernicusDemJob(
+                    row + 1,
+                    column + 1,
+                    BoundingBox(west, south, east, north),
+                    tile_width,
+                    tile_height,
+                    instance,
+                    acquisition_id,
+                )
+            )
+    return jobs
+
+
 def _acquisition_id(bbox: BoundingBox, instance: str) -> str:
     import hashlib
 
-    text = (
-        f"{instance}|{bbox.west:.12g}|{bbox.south:.12g}|"
-        f"{bbox.east:.12g}|{bbox.north:.12g}"
-    )
+    text = f"{instance}|{bbox.west:.12g}|{bbox.south:.12g}|{bbox.east:.12g}|{bbox.north:.12g}"
     digest = hashlib.sha256(text.encode("ascii")).hexdigest()[:12]
     return f"{instance.lower()}_{digest}"
 

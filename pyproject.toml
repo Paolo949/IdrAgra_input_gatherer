@@ -16,6 +16,9 @@ era5 = ["cdsapi>=0.7"]
 [project.scripts]
 idragather = "IdrAgraGather.core.cli:main"
 
+[tool.ruff]
+line-length = 130
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["IdrAgraGather", "IdrAgraGather.core*"]

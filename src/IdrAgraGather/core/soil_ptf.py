@@ -89,106 +89,7 @@ class _SourceHorizon:
     bd_g_cm3: float
 
 
-def rosetta_field_groups(*, use_bulk_density: bool = True) -> PtfFieldGroups:
-    """Describe method inputs/outputs for both the dialog and provenance."""
-
-    required = ["sand_pct", "silt_pct", "clay_pct"]
-    unused = ["skel_pct", "oc_pct"]
-    if use_bulk_density:
-        required.append("bd_g_cm3")
-    else:
-        unused.append("bd_g_cm3")
-    return PtfFieldGroups(
-        tuple(required), tuple(OUTPUT_FIELD_INFO), tuple(unused)
-    )
-
-
-def predict_rosetta3(
-    samples: Sequence[Sequence[float]] | np.ndarray,
-    *,
-    use_bulk_density: bool = True,
-) -> RosettaPrediction:
-    """Predict Rosetta 3 H2/H3 parameters using arithmetic ensemble means.
-
-    Input columns are sand, silt and clay percentages, followed by bulk density
-    in g/cm3 for H3.  Rosetta's alpha (1/cm) and Ksat (cm/day) are converted to
-    the canonical 1/mm and mm/h used by this project.
-    """
-
-    values = np.asarray(samples, dtype=np.float64)
-    if values.ndim == 1:
-        values = values[np.newaxis, :]
-    model_code = 3 if use_bulk_density else 2
-    expected_columns = 4 if use_bulk_density else 3
-    if values.ndim != 2 or values.shape[1] != expected_columns:
-        raise ValueError(
-            f"Rosetta H{model_code} input must have {expected_columns} columns"
-        )
-    if not np.all(np.isfinite(values)):
-        raise ValueError("Rosetta inputs must all be finite numbers")
-    texture = values[:, :3]
-    texture_total = np.sum(texture, axis=1)
-    invalid_texture = (
-        np.any(texture < 0.0, axis=1)
-        | (texture_total < 99.0)
-        | (texture_total > 101.0)
-    )
-    if np.any(invalid_texture):
-        indices = ", ".join(str(index + 1) for index in np.flatnonzero(invalid_texture))
-        raise ValueError(
-            "Rosetta requires non-negative sand/silt/clay summing to 99-101%; "
-            f"invalid input row(s): {indices}"
-        )
-    if use_bulk_density:
-        invalid_density = (values[:, 3] < 0.5) | (values[:, 3] > 2.0)
-        if np.any(invalid_density):
-            indices = ", ".join(
-                str(index + 1) for index in np.flatnonzero(invalid_density)
-            )
-            raise ValueError(
-                "Rosetta H3 requires bulk density in the range 0.5-2.0 g/cm3; "
-                f"invalid input row(s): {indices}"
-            )
-
-    boot = _rosetta_bootstrap(model_code, values)
-    # The neural network emits theta_r, theta_s, log10(alpha [1/cm]),
-    # log10(n), and log10(Ksat [cm/day]).
-    boot[:, :, 2:] = np.power(10.0, boot[:, :, 2:])
-    mean = np.mean(boot, axis=0)
-    std = np.std(boot, axis=0, ddof=1)
-    mean[:, 2] /= 10.0
-    std[:, 2] /= 10.0
-    mean[:, 4] *= 10.0 / 24.0
-    std[:, 4] *= 10.0 / 24.0
-    return RosettaPrediction(
-        mean,
-        std,
-        ("theta_res", "theta_sat", "vg_alpha", "vg_n", "ksat_mm_h"),
-        model_code,
-    )
-
-
-def van_genuchten_theta(
-    pressure_kpa: float | np.ndarray,
-    theta_res: float | np.ndarray,
-    theta_sat: float | np.ndarray,
-    vg_alpha: float | np.ndarray,
-    vg_n: float | np.ndarray,
-) -> np.ndarray:
-    """Evaluate the constrained van Genuchten curve (m = 1 - 1/n)."""
-
-    pressure = np.asarray(pressure_kpa, dtype=np.float64)
-    residual = np.asarray(theta_res, dtype=np.float64)
-    saturated = np.asarray(theta_sat, dtype=np.float64)
-    alpha = np.asarray(vg_alpha, dtype=np.float64)
-    n_value = np.asarray(vg_n, dtype=np.float64)
-    m_value = 1.0 - 1.0 / n_value
-    head_mm = np.abs(pressure) * PRESSURE_HEAD_MM_PER_KPA
-    return residual + (saturated - residual) / np.power(
-        1.0 + np.power(alpha * head_mm, n_value), m_value
-    )
-
-
+# Apply Rosetta 3 to every profile/horizon in a normalized workspace.
 def apply_rosetta3_to_workspace(
     output_root: str | Path,
     *,
@@ -196,8 +97,6 @@ def apply_rosetta3_to_workspace(
     use_bulk_density: bool = True,
     on_status: Callable[[str], None] | None = None,
 ) -> SoilPtfResult:
-    """Apply Rosetta 3 to every profile/horizon in a normalized workspace."""
-
     root = Path(output_root).resolve()
     source = Path(source_path or root / "soil" / "soil_profiles.gpkg").resolve()
     if not source.is_file():
@@ -219,10 +118,7 @@ def apply_rosetta3_to_workspace(
         dtype=np.float64,
     )
     if on_status is not None:
-        on_status(
-            f"Running Rosetta 3 H{3 if use_bulk_density else 2} for "
-            f"{len(horizons)} profile horizon(s)."
-        )
+        on_status(f"Running Rosetta 3 H{3 if use_bulk_density else 2} for {len(horizons)} profile horizon(s).")
     prediction = predict_rosetta3(samples, use_bulk_density=use_bulk_density)
     generated = _canonical_rows(horizons, prediction)
     output = root / "soil" / OUTPUT_NAME
@@ -238,10 +134,8 @@ def apply_rosetta3_to_workspace(
         use_bulk_density=use_bulk_density,
     )
     warnings = (
-        "Rosetta does not use organic carbon in H2/H3; oc_pct was retained "
-        "only as source context.",
-        "No coarse-fragment correction was applied; skel_pct was retained "
-        "only as source context.",
+        "Rosetta does not use organic carbon in H2/H3; oc_pct was retained only as source context.",
+        "No coarse-fragment correction was applied; skel_pct was retained only as source context.",
     )
     Manifest(root).add_asset(
         output,
@@ -276,16 +170,60 @@ def apply_rosetta3_to_workspace(
     )
 
 
-def _canonical_rows(
-    horizons: Sequence[_SourceHorizon], prediction: RosettaPrediction
-) -> list[dict[str, float]]:
+# Predict Rosetta 3 H2/H3 parameters using arithmetic ensemble means.
+#
+# Input columns are sand, silt and clay percentages, followed by bulk density
+# in g/cm3 for H3.  Rosetta's alpha (1/cm) and Ksat (cm/day) are converted to
+# the canonical 1/mm and mm/h used by this project.
+def predict_rosetta3(
+    samples: Sequence[Sequence[float]] | np.ndarray,
+    *,
+    use_bulk_density: bool = True,
+) -> RosettaPrediction:
+    values = np.asarray(samples, dtype=np.float64)
+    if values.ndim == 1:
+        values = values[np.newaxis, :]
+    model_code = 3 if use_bulk_density else 2
+    expected_columns = 4 if use_bulk_density else 3
+    if values.ndim != 2 or values.shape[1] != expected_columns:
+        raise ValueError(f"Rosetta H{model_code} input must have {expected_columns} columns")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Rosetta inputs must all be finite numbers")
+    texture = values[:, :3]
+    texture_total = np.sum(texture, axis=1)
+    invalid_texture = np.any(texture < 0.0, axis=1) | (texture_total < 99.0) | (texture_total > 101.0)
+    if np.any(invalid_texture):
+        indices = ", ".join(str(index + 1) for index in np.flatnonzero(invalid_texture))
+        raise ValueError(f"Rosetta requires non-negative sand/silt/clay summing to 99-101%; invalid input row(s): {indices}")
+    if use_bulk_density:
+        invalid_density = (values[:, 3] < 0.5) | (values[:, 3] > 2.0)
+        if np.any(invalid_density):
+            indices = ", ".join(str(index + 1) for index in np.flatnonzero(invalid_density))
+            raise ValueError(f"Rosetta H3 requires bulk density in the range 0.5-2.0 g/cm3; invalid input row(s): {indices}")
+
+    boot = _rosetta_bootstrap(model_code, values)
+    # The neural network emits theta_r, theta_s, log10(alpha [1/cm]),
+    # log10(n), and log10(Ksat [cm/day]).
+    boot[:, :, 2:] = np.power(10.0, boot[:, :, 2:])
+    mean = np.mean(boot, axis=0)
+    std = np.std(boot, axis=0, ddof=1)
+    mean[:, 2] /= 10.0
+    std[:, 2] /= 10.0
+    mean[:, 4] *= 10.0 / 24.0
+    std[:, 4] *= 10.0 / 24.0
+    return RosettaPrediction(
+        mean,
+        std,
+        ("theta_res", "theta_sat", "vg_alpha", "vg_n", "ksat_mm_h"),
+        model_code,
+    )
+
+
+def _canonical_rows(horizons: Sequence[_SourceHorizon], prediction: RosettaPrediction) -> list[dict[str, float]]:
     field_index = {name: index for index, name in enumerate(prediction.fields)}
     rows: list[dict[str, float]] = []
     for row_index, _item in enumerate(horizons):
-        direct = {
-            name: float(prediction.values[row_index, index])
-            for name, index in field_index.items()
-        }
+        direct = {name: float(prediction.values[row_index, index]) for name, index in field_index.items()}
         direct["vg_m"] = 1.0 - 1.0 / direct["vg_n"]
         direct["theta_fc"] = float(
             van_genuchten_theta(
@@ -306,11 +244,27 @@ def _canonical_rows(
             )
         )
         for name, index in field_index.items():
-            direct[name + "_sd"] = float(
-                prediction.standard_deviations[row_index, index]
-            )
+            direct[name + "_sd"] = float(prediction.standard_deviations[row_index, index])
         rows.append(direct)
     return rows
+
+
+# Evaluate the constrained van Genuchten curve (m = 1 - 1/n).
+def van_genuchten_theta(
+    pressure_kpa: float | np.ndarray,
+    theta_res: float | np.ndarray,
+    theta_sat: float | np.ndarray,
+    vg_alpha: float | np.ndarray,
+    vg_n: float | np.ndarray,
+) -> np.ndarray:
+    pressure = np.asarray(pressure_kpa, dtype=np.float64)
+    residual = np.asarray(theta_res, dtype=np.float64)
+    saturated = np.asarray(theta_sat, dtype=np.float64)
+    alpha = np.asarray(vg_alpha, dtype=np.float64)
+    n_value = np.asarray(vg_n, dtype=np.float64)
+    m_value = 1.0 - 1.0 / n_value
+    head_mm = np.abs(pressure) * PRESSURE_HEAD_MM_PER_KPA
+    return residual + (saturated - residual) / np.power(1.0 + np.power(alpha * head_mm, n_value), m_value)
 
 
 def _read_source_horizons(path: Path) -> list[_SourceHorizon]:
@@ -339,9 +293,7 @@ def _read_source_horizons(path: Path) -> list[_SourceHorizon]:
     missing = [name for name in required if definition.GetFieldIndex(name) < 0]
     if missing:
         database = None
-        raise ValueError(
-            "Normalized soil layer is missing required field(s): " + ", ".join(missing)
-        )
+        raise ValueError("Normalized soil layer is missing required field(s): " + ", ".join(missing))
 
     profiles: dict[int, tuple[tuple[float, ...], ...]] = {}
     layer.ResetReading()
@@ -366,9 +318,7 @@ def _read_source_horizons(path: Path) -> list[_SourceHorizon]:
         previous = profiles.get(profile_id)
         if previous is not None and previous != values:
             database = None
-            raise ValueError(
-                f"Normalized polygons with profile_id {profile_id} have inconsistent attributes"
-            )
+            raise ValueError(f"Normalized polygons with profile_id {profile_id} have inconsistent attributes")
         profiles[profile_id] = values
     database = None
     if not profiles:
@@ -502,8 +452,7 @@ def _write_hydraulic_geopackage(
                 }
                 _create_feature(layers, ogr, row)
             database.ExecuteSQL(
-                "CREATE INDEX IF NOT EXISTS soil_hydraulic_layers_profile "
-                "ON soil_hydraulic_layers (profile_id, horizon)"
+                "CREATE INDEX IF NOT EXISTS soil_hydraulic_layers_profile ON soil_hydraulic_layers (profile_id, horizon)"
             )
             database.CommitTransaction()
         except Exception:
@@ -521,9 +470,19 @@ def _write_hydraulic_geopackage(
     except PermissionError as exc:
         working.unlink(missing_ok=True)
         raise RuntimeError(
-            "Could not replace the hydraulic GeoPackage because it is open in QGIS "
-            f"or another application: {path}"
+            f"Could not replace the hydraulic GeoPackage because it is open in QGIS or another application: {path}"
         ) from exc
+
+
+# Describe method inputs/outputs for both the dialog and provenance.
+def rosetta_field_groups(*, use_bulk_density: bool = True) -> PtfFieldGroups:
+    required = ["sand_pct", "silt_pct", "clay_pct"]
+    unused = ["skel_pct", "oc_pct"]
+    if use_bulk_density:
+        required.append("bd_g_cm3")
+    else:
+        unused.append("bd_g_cm3")
+    return PtfFieldGroups(tuple(required), tuple(OUTPUT_FIELD_INFO), tuple(unused))
 
 
 def _create_table(database, ogr, name: str, fields: Iterable[tuple[str, int]]):
@@ -548,6 +507,30 @@ def _create_feature(layer, ogr, values: Mapping[str, object]) -> None:
     feature = None
 
 
+def _rosetta_bootstrap(model_code: int, inputs: np.ndarray) -> np.ndarray:
+    model = _load_rosetta_model(model_code)
+    scaled = np.zeros_like(inputs)
+    for index, metadata in enumerate(model["inputs"].tolist()):
+        scaled[:, index] = _scale_values(inputs[:, index], metadata["scale"], metadata["params"])
+
+    weights = model["weights"].tolist()
+    biases = model["biases"].tolist()
+    layers = model["layers"].tolist()
+    activations = scaled[np.newaxis, :, :]
+    for layer_index, metadata in enumerate(layers):
+        stacked_weights = np.stack([np.asarray(item[layer_index]).T for item in weights])
+        stacked_biases = np.stack([np.atleast_2d(np.asarray(item[layer_index])) for item in biases])
+        activations = _activate(
+            np.matmul(activations, stacked_weights) + stacked_biases,
+            metadata["activate"],
+        )
+
+    outputs = np.zeros_like(activations)
+    for index, metadata in enumerate(model["outputs"].tolist()):
+        outputs[:, :, index] = _scale_values(activations[:, :, index], metadata["scale"], metadata["params"])
+    return outputs
+
+
 @lru_cache(maxsize=2)
 def _load_rosetta_model(model_code: int) -> dict[str, object]:
     if model_code not in (2, 3):
@@ -557,38 +540,6 @@ def _load_rosetta_model(model_code: int) -> dict[str, object]:
         raise RuntimeError(f"Bundled Rosetta model asset is missing: {path}")
     with np.load(path, allow_pickle=True) as archive:
         return {name: archive[name].copy() for name in archive.files}
-
-
-def _rosetta_bootstrap(model_code: int, inputs: np.ndarray) -> np.ndarray:
-    model = _load_rosetta_model(model_code)
-    scaled = np.zeros_like(inputs)
-    for index, metadata in enumerate(model["inputs"].tolist()):
-        scaled[:, index] = _scale_values(
-            inputs[:, index], metadata["scale"], metadata["params"]
-        )
-
-    weights = model["weights"].tolist()
-    biases = model["biases"].tolist()
-    layers = model["layers"].tolist()
-    activations = scaled[np.newaxis, :, :]
-    for layer_index, metadata in enumerate(layers):
-        stacked_weights = np.stack(
-            [np.asarray(item[layer_index]).T for item in weights]
-        )
-        stacked_biases = np.stack(
-            [np.atleast_2d(np.asarray(item[layer_index])) for item in biases]
-        )
-        activations = _activate(
-            np.matmul(activations, stacked_weights) + stacked_biases,
-            metadata["activate"],
-        )
-
-    outputs = np.zeros_like(activations)
-    for index, metadata in enumerate(model["outputs"].tolist()):
-        outputs[:, :, index] = _scale_values(
-            activations[:, :, index], metadata["scale"], metadata["params"]
-        )
-    return outputs
 
 
 def _scale_values(values: np.ndarray, method: str, params: Sequence[float]) -> np.ndarray:
