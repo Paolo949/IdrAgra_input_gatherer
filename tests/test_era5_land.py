@@ -60,9 +60,9 @@ class Era5LandTests(unittest.TestCase):
         self.assertEqual([job.target_name for job in jobs], ["2024-01.nc", "2024-02.nc"])
         self.assertEqual(jobs[0].request["day"], ["30", "31"])
         self.assertEqual(jobs[1].request["day"], ["01", "02"])
-        self.assertEqual(jobs[0].request["area"], [46.2, 8.5, 44.7, 10.2])
+        self.assertEqual(jobs[0].request["area"], [46.3, 8.4, 44.6, 10.3])
 
-    def test_small_aoi_is_snapped_outward_to_era5_land_grid(self):
+    def test_small_aoi_includes_a_centroid_beyond_every_side(self):
         jobs = plan_jobs(
             BoundingBox(
                 9.376581165845161,
@@ -72,14 +72,14 @@ class Era5LandTests(unittest.TestCase):
             ),
             DateWindow(date(2025, 1, 1), date(2025, 1, 1)),
         )
-        self.assertEqual(jobs[0].request["area"], [46.2, 9.3, 46.1, 9.5])
+        self.assertEqual(jobs[0].request["area"], [46.275928185405, 9.276581165845, 46.043438115229, 9.53784743494])
 
-    def test_grid_aligned_aoi_is_not_expanded(self):
+    def test_grid_aligned_aoi_still_includes_exterior_centroids(self):
         jobs = plan_jobs(
             BoundingBox(9.3, 46.1, 9.5, 46.2),
             DateWindow(date(2025, 1, 1), date(2025, 1, 1)),
         )
-        self.assertEqual(jobs[0].request["area"], [46.2, 9.3, 46.1, 9.5])
+        self.assertEqual(jobs[0].request["area"], [46.3, 9.2, 46.0, 9.6])
 
     def test_fetch_records_manifest_and_resumes(self):
         bbox = BoundingBox(8.5, 44.7, 10.2, 46.2)
@@ -96,6 +96,15 @@ class Era5LandTests(unittest.TestCase):
             manifest = (root / "manifest.json").read_text(encoding="utf-8")
             self.assertIn('"schema_version": 1', manifest)
             self.assertIn('"provider": "copernicus-cds"', manifest)
+
+    def test_fetch_does_not_reuse_a_month_downloaded_for_different_bounds(self):
+        window = DateWindow(date(2025, 1, 1), date(2025, 1, 1))
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as temporary:
+            fetch(temporary, BoundingBox(9.3, 46.1, 9.5, 46.2), window, client=client)
+            fetch(temporary, BoundingBox(9.4, 46.2, 9.6, 46.3), window, client=client)
+        self.assertEqual(len(client.calls), 2)
+        self.assertNotEqual(client.calls[0][1]["area"], client.calls[1][1]["area"])
 
     def test_default_client_disables_console_output_and_reports_status(self):
         created = {}

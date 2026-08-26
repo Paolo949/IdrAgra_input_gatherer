@@ -121,7 +121,8 @@ def normalize_corine_file(
 
     polygon_count = 0
     categories: set[str] = set()
-    clip_geometry = aoi_geometry(bbox, source_layer.GetSpatialRef(), ogr, osr) if bbox is not None else None
+    aoi_path = output_root / "aoi.geojson"
+    clip_geometry = aoi_geometry(aoi_path, source_layer.GetSpatialRef(), ogr, osr) if bbox is not None else None
     try:
         with TemporaryDirectory(prefix=".landuse-", dir=output.parent) as temporary:
             temporary_output = Path(temporary) / OUTPUT_NAME
@@ -199,6 +200,7 @@ def normalize_corine_file(
             },
             "numeric_code_retained": False,
             "clip_aoi": bbox.as_dict() if bbox is not None else None,
+            "clip_geometry": "aoi.geojson" if aoi_path.is_file() else None,
             "polygon_count": polygon_count,
             "category_count": len(categories),
         },

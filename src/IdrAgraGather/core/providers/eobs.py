@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from datetime import date
 import hashlib
-import math
 import os
 from pathlib import Path
 from typing import Callable, Iterable
@@ -52,6 +51,11 @@ def fetch(
         subsetter = _subset_remote_job
     manifest = Manifest(root)
     manifest.configure(aoi=bbox.as_dict(), date_window=window.as_dict())
+    previous_assets = [
+        root / asset["path"]
+        for asset in manifest.read().get("assets", [])
+        if asset.get("provider") == "eobs-knmi" and Path(asset["path"]).suffix == ".nc"
+    ]
     subset_west, subset_south, subset_east, subset_north = _buffered_grid_bounds(bbox)
     outputs: list[Path] = []
 
@@ -109,6 +113,9 @@ def fetch(
         outputs.append(destination)
         if on_progress is not None:
             on_progress(index, len(jobs), destination)
+    if len(outputs) == len(jobs):
+        current_outputs = set(outputs)
+        manifest.remove_assets(path for path in previous_assets if path not in current_outputs)
     return outputs
 
 
@@ -227,24 +234,13 @@ def _subset_remote_job(
     result = None
 
 
-# Return the outward-snapped AOI plus one surrounding E-OBS grid cell on every side.
+# Expand the AOI by one grid spacing so the selection includes a centroid beyond every side.
 def _buffered_grid_bounds(bbox: BoundingBox) -> tuple[float, float, float, float]:
-    west_index = math.floor((bbox.west + 1e-12) / GRID_DEGREES)
-    south_index = math.floor((bbox.south + 1e-12) / GRID_DEGREES)
-    east_index = math.ceil((bbox.east - 1e-12) / GRID_DEGREES)
-    north_index = math.ceil((bbox.north - 1e-12) / GRID_DEGREES)
-    if abs(west_index * GRID_DEGREES - bbox.west) <= 1e-9:
-        west_index -= SPATIAL_BUFFER_CELLS
-    if abs(south_index * GRID_DEGREES - bbox.south) <= 1e-9:
-        south_index -= SPATIAL_BUFFER_CELLS
-    if abs(east_index * GRID_DEGREES - bbox.east) <= 1e-9:
-        east_index += SPATIAL_BUFFER_CELLS
-    if abs(north_index * GRID_DEGREES - bbox.north) <= 1e-9:
-        north_index += SPATIAL_BUFFER_CELLS
-    west = max(-180.0, round(west_index * GRID_DEGREES, 1))
-    south = max(-90.0, round(south_index * GRID_DEGREES, 1))
-    east = min(180.0, round(east_index * GRID_DEGREES, 1))
-    north = min(90.0, round(north_index * GRID_DEGREES, 1))
+    buffer_degrees = GRID_DEGREES * SPATIAL_BUFFER_CELLS
+    west = max(-180.0, round(bbox.west - buffer_degrees, 12))
+    south = max(-90.0, round(bbox.south - buffer_degrees, 12))
+    east = min(180.0, round(bbox.east + buffer_degrees, 12))
+    north = min(90.0, round(bbox.north + buffer_degrees, 12))
     return west, south, east, north
 
 

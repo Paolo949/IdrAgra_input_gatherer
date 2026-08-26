@@ -11,7 +11,7 @@ from IdrAgraGather.core.staging import find_staged_files
 class EobsProviderTests(unittest.TestCase):
     def test_remote_subset_includes_one_grid_cell_around_the_aoi(self):
         bounds = _buffered_grid_bounds(BoundingBox(9.376, 46.143, 9.437, 46.176))
-        self.assertEqual(bounds, (9.3, 46.1, 9.5, 46.2))
+        self.assertEqual(bounds, (9.276, 46.043, 9.537, 46.276))
 
         aligned_bounds = _buffered_grid_bounds(BoundingBox(9.3, 46.1, 9.5, 46.2))
         self.assertEqual(aligned_bounds, (9.2, 46.0, 9.6, 46.3))
@@ -77,6 +77,18 @@ class EobsProviderTests(unittest.TestCase):
                 suffix=".nc",
             )
             self.assertEqual(set(staged), set(outputs))
+
+    def test_new_bounds_supersede_old_eobs_assets_in_the_manifest(self):
+        def subsetter(_job, target, _bbox, _window, _is_cancelled):
+            target.write_bytes(b"netcdf placeholder")
+
+        window = DateWindow(date(2025, 1, 1), date(2025, 1, 2))
+        with tempfile.TemporaryDirectory() as temporary:
+            old_outputs = fetch(temporary, BoundingBox(9.3, 46.1, 9.5, 46.2), window, subsetter=subsetter)
+            new_outputs = fetch(temporary, BoundingBox(9.4, 46.2, 9.6, 46.3), window, subsetter=subsetter)
+            staged = find_staged_files(temporary, provider="eobs-knmi", suffix=".nc")
+            self.assertEqual(set(staged), set(new_outputs))
+            self.assertTrue(set(old_outputs).isdisjoint(staged))
 
 
 if __name__ == "__main__":

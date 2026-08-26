@@ -73,7 +73,14 @@ def normalize_soilgrids_files(
             f"{len(normalized.profiles)} soil class(es); filled "
             f"{normalized.filled_nodata_cells} NoData cell(s)."
         )
-    polygon_count = _write_geopackage(output, normalized, geotransform, projection, bbox=bbox)
+    polygon_count = _write_geopackage(
+        output,
+        normalized,
+        geotransform,
+        projection,
+        bbox=bbox,
+        aoi_path=Path(output_root).resolve() / "aoi.geojson",
+    )
 
     Manifest(Path(output_root)).add_asset(
         output,
@@ -107,6 +114,7 @@ def normalize_soilgrids_files(
             ),
             "filled_nodata_cells": normalized.filled_nodata_cells,
             "clip_aoi": bbox.as_dict() if bbox is not None else None,
+            "clip_geometry": "aoi.geojson" if (Path(output_root).resolve() / "aoi.geojson").is_file() else None,
             "ptf_applied": False,
         },
     )
@@ -371,7 +379,7 @@ def _read_rasters(paths: tuple[Path, ...]):
     return raw, masks, reference_transform, reference_projection
 
 
-def _write_geopackage(path, normalized, geotransform, projection, *, bbox=None):
+def _write_geopackage(path, normalized, geotransform, projection, *, bbox=None, aoi_path=None):
     try:
         from osgeo import gdal, ogr, osr
     except ImportError as exc:
@@ -419,7 +427,7 @@ def _write_geopackage(path, normalized, geotransform, projection, *, bbox=None):
     if gdal.Polygonize(zone_band, mask_band, layer, profile_index, []) != 0:
         raise RuntimeError("GDAL failed to polygonize normalized SoilGrids profiles")
 
-    clip_geometry = aoi_geometry(bbox, spatial_reference, ogr, osr) if bbox is not None else None
+    clip_geometry = aoi_geometry(aoi_path, spatial_reference, ogr, osr) if bbox is not None else None
     database.StartTransaction()
     polygon_count = 0
     try:

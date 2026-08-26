@@ -78,12 +78,40 @@ class StagingTests(unittest.TestCase):
                 area.stage_local(second, category="weather")
 
     def test_write_aoi_creates_loadable_geojson_shape(self):
+        geometry = {
+            "type": "Polygon",
+            "coordinates": [[[8.5, 44.7], [10.2, 44.7], [10.2, 46.2], [8.5, 46.2], [8.5, 44.7]]],
+        }
         with tempfile.TemporaryDirectory() as temporary:
-            output = StagingArea(temporary).write_aoi(BoundingBox(8.5, 44.7, 10.2, 46.2))
+            output = StagingArea(temporary).write_aoi(BoundingBox(8.5, 44.7, 10.2, 46.2), geometry=geometry)
             geojson = json.loads(output.read_text(encoding="utf-8"))
             ring = geojson["features"][0]["geometry"]["coordinates"][0]
             self.assertEqual(ring[0], ring[-1])
             self.assertEqual(len(ring), 5)
+
+    def test_write_aoi_preserves_exact_polygon_separately_from_its_envelope(self):
+        geometry = {
+            "type": "Polygon",
+            "coordinates": [[[9.0, 45.2], [9.8, 45.0], [10.0, 45.8], [9.2, 46.0], [9.0, 45.2]]],
+        }
+        bbox = BoundingBox(9.0, 45.0, 10.0, 46.0)
+        with tempfile.TemporaryDirectory() as temporary:
+            output = StagingArea(temporary).write_aoi(bbox, geometry=geometry)
+            geojson = json.loads(output.read_text(encoding="utf-8"))
+            manifest = Manifest(Path(temporary)).read()
+            self.assertEqual(geojson["features"][0]["geometry"], geometry)
+            self.assertEqual(geojson["features"][0]["properties"]["geometry_source"], "exact-canvas-polygon")
+            self.assertEqual(manifest["aoi"], bbox.as_dict())
+            self.assertEqual(manifest["assets"][0]["dataset"], "study-area-polygon")
+
+    def test_write_aoi_rejects_an_open_polygon_ring(self):
+        geometry = {
+            "type": "Polygon",
+            "coordinates": [[[9.0, 45.0], [10.0, 45.0], [10.0, 46.0], [9.0, 46.0]]],
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaisesRegex(ValueError, "exterior ring must be closed"):
+                StagingArea(temporary).write_aoi(BoundingBox(9.0, 45.0, 10.0, 46.0), geometry=geometry)
 
 
 if __name__ == "__main__":

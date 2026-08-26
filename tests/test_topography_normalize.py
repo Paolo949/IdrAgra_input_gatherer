@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from IdrAgraGather.core.models import BoundingBox
+from IdrAgraGather.core.staging import StagingArea
 from IdrAgraGather.core.topography_normalize import (
     ELEVATION_NAME,
     SLOPE_NAME,
@@ -46,9 +47,17 @@ class TopographyNormalizeTests(unittest.TestCase):
             band = None
             dataset = None
 
+            project = Path(temporary) / "project"
+            StagingArea(project).write_aoi(
+                bbox,
+                geometry={
+                    "type": "Polygon",
+                    "coordinates": [[[9.0, 45.0], [9.02, 45.0], [9.02, 45.02], [9.0, 45.02], [9.0, 45.0]]],
+                },
+            )
             result = normalize_dem_files(
                 [source],
-                Path(temporary) / "project",
+                project,
                 bbox=bbox,
                 resolution_m=100.0,
                 dem_instance="COPERNICUS_30",

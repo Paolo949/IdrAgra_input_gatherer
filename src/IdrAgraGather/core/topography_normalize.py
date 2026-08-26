@@ -1,4 +1,3 @@
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -93,8 +92,9 @@ def normalize_dem_files(
         temporary_dir = Path(temporary)
         temporary_elevation = temporary_dir / ELEVATION_NAME
         temporary_slope = temporary_dir / SLOPE_NAME
-        cutline = temporary_dir / "aoi.geojson"
-        _write_cutline(cutline, bbox)
+        cutline = output_root / "aoi.geojson"
+        if not cutline.is_file():
+            raise ValueError(f"Workspace has no saved AOI polygon: {cutline}")
         warped = gdal.Warp(
             str(temporary_elevation),
             [str(path) for path in sources],
@@ -159,6 +159,7 @@ def normalize_dem_files(
     common_request = {
         "source_paths": [str(path) for path in sources],
         "clip_aoi": bbox.as_dict(),
+        "clip_geometry": "aoi.geojson" if (output_root / "aoi.geojson").is_file() else None,
         "target_crs": target_crs,
         "resolution_m": float(resolution_m),
         "resampling": "bilinear",
@@ -213,29 +214,6 @@ def utm_epsg_for_bbox(bbox: BoundingBox) -> int:
         )
     zone = min(60, max(1, int((longitude + 180.0) // 6.0) + 1))
     return (32600 if latitude >= 0 else 32700) + zone
-
-
-def _write_cutline(path: Path, bbox: BoundingBox) -> None:
-    ring = [
-        [bbox.west, bbox.south],
-        [bbox.east, bbox.south],
-        [bbox.east, bbox.north],
-        [bbox.west, bbox.north],
-        [bbox.west, bbox.south],
-    ]
-    collection = {
-        "type": "FeatureCollection",
-        "name": "topography_aoi",
-        "crs": {"type": "name", "properties": {"name": "EPSG:4326"}},
-        "features": [
-            {
-                "type": "Feature",
-                "properties": {},
-                "geometry": {"type": "Polygon", "coordinates": [ring]},
-            }
-        ],
-    }
-    path.write_text(json.dumps(collection), encoding="utf-8")
 
 
 def _replace_outputs(temporary_paths: tuple[Path, ...], targets: tuple[Path, ...]) -> None:

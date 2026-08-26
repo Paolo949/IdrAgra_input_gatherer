@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 from IdrAgraGather.core.models import BoundingBox
+from IdrAgraGather.core.staging import StagingArea
 from IdrAgraGather.core.providers.soilgrids import DEPTHS, PROPERTIES
 from IdrAgraGather.core.soilgrids_normalize import (
     normalize_soilgrids_arrays,
@@ -119,6 +120,15 @@ class SoilGridsNormalizeTests(unittest.TestCase):
                     paths.append(path)
 
             clip = BoundingBox(9.005, 44.992, 9.015, 44.998)
+            StagingArea(temporary).write_aoi(
+                clip,
+                geometry={
+                    "type": "Polygon",
+                    "coordinates": [
+                        [[9.005, 44.992], [9.015, 44.992], [9.015, 44.998], [9.005, 44.998], [9.005, 44.992]]
+                    ],
+                },
+            )
             result = normalize_soilgrids_files(paths, temporary, bbox=clip)
             self.assertEqual(result.profile_count, 2)
             self.assertEqual(result.polygon_count, 2)
@@ -143,7 +153,7 @@ class SoilGridsNormalizeTests(unittest.TestCase):
                 self.assertLessEqual(north, clip.north)
             database = None
             manifest = json.loads((Path(temporary) / "manifest.json").read_text())
-            request = manifest["assets"][0]["request"]
+            request = next(item["request"] for item in manifest["assets"] if item["path"] == "soil/soil_profiles.gpkg")
             self.assertEqual(request["classification"]["maximum_classes"], 20)
             self.assertEqual(request["classification"]["output_class_count"], 2)
             self.assertEqual(request["filled_nodata_cells"], 0)

@@ -1,23 +1,20 @@
-from .models import BoundingBox
+from pathlib import Path
 
+from .staging import AOI_GEOMETRY_SOURCE
 
-# Return the EPSG:4326 AOI rectangle transformed into *target_srs*.
-def aoi_geometry(bbox: BoundingBox, target_srs, ogr, osr):
-    source_srs = osr.SpatialReference()
-    source_srs.ImportFromEPSG(4326)
+# Return the authoritative saved AOI polygon in *target_srs*.
+def aoi_geometry(path: str | Path, target_srs, ogr, osr):
+    path = Path(path)
+    if not path.is_file():
+        raise ValueError(f"Workspace has no saved AOI polygon: {path}")
+    polygon = _read_aoi_polygon(path, ogr)
+    source_srs = polygon.GetSpatialReference()
+    if source_srs is None:
+        source_srs = osr.SpatialReference()
+        source_srs.ImportFromEPSG(4326)
     axis_strategy = getattr(osr, "OAMS_TRADITIONAL_GIS_ORDER", None)
     if axis_strategy is not None:
         source_srs.SetAxisMappingStrategy(axis_strategy)
-
-    ring = ogr.Geometry(ogr.wkbLinearRing)
-    ring.AddPoint_2D(bbox.west, bbox.south)
-    ring.AddPoint_2D(bbox.east, bbox.south)
-    ring.AddPoint_2D(bbox.east, bbox.north)
-    ring.AddPoint_2D(bbox.west, bbox.north)
-    ring.AddPoint_2D(bbox.west, bbox.south)
-    polygon = ogr.Geometry(ogr.wkbPolygon)
-    polygon.AddGeometry(ring)
-    polygon.AssignSpatialReference(source_srs)
 
     if target_srs is None:
         return polygon
@@ -28,4 +25,26 @@ def aoi_geometry(bbox: BoundingBox, target_srs, ogr, osr):
     if polygon.Transform(transformation) != 0:
         raise RuntimeError("failed to transform the AOI into the vector layer CRS")
     polygon.AssignSpatialReference(destination_srs)
+    return polygon
+
+
+def _read_aoi_polygon(path: str | Path, ogr):
+    database = ogr.Open(str(path), 0)
+    if database is None:
+        raise ValueError(f"OGR could not open saved AOI: {path}")
+    layer = database.GetLayer(0)
+    feature = layer.GetNextFeature() if layer is not None else None
+    source_index = layer.GetLayerDefn().GetFieldIndex("geometry_source") if layer is not None else -1
+    if feature is None or source_index < 0 or feature.GetField(source_index) != AOI_GEOMETRY_SOURCE:
+        database = None
+        raise ValueError(f"Saved AOI predates exact polygon support; redraw the study area: {path}")
+    geometry = feature.GetGeometryRef() if feature is not None else None
+    if geometry is None or geometry.IsEmpty():
+        database = None
+        raise ValueError(f"Saved AOI contains no polygon geometry: {path}")
+    polygon = geometry.Clone()
+    spatial_reference = geometry.GetSpatialReference() or layer.GetSpatialRef()
+    if spatial_reference is not None:
+        polygon.AssignSpatialReference(spatial_reference.Clone())
+    database = None
     return polygon

@@ -7,6 +7,7 @@ from .models import BoundingBox
 
 
 CATEGORIES = ("weather", "soil", "landuse", "topography")
+AOI_GEOMETRY_SOURCE = "exact-canvas-polygon"
 
 
 # Each project keeps one dataset per provider; resolve its files without relying on storage paths.
@@ -77,17 +78,11 @@ class StagingArea:
         )
         return destination
 
-    # Write the requested area as a small EPSG:4326 GeoJSON layer.
-    def write_aoi(self, bbox: BoundingBox) -> Path:
+    # Write the exact requested polygon separately from its acquisition envelope.
+    def write_aoi(self, bbox: BoundingBox, *, geometry: dict) -> Path:
         self.root.mkdir(parents=True, exist_ok=True)
         output = self.root / "aoi.geojson"
-        ring = [
-            [bbox.west, bbox.south],
-            [bbox.east, bbox.south],
-            [bbox.east, bbox.north],
-            [bbox.west, bbox.north],
-            [bbox.west, bbox.south],
-        ]
+        _validate_aoi_geometry(geometry)
         geojson = {
             "type": "FeatureCollection",
             "name": "IdrAgra acquisition AOI",
@@ -95,8 +90,8 @@ class StagingArea:
             "features": [
                 {
                     "type": "Feature",
-                    "properties": {},
-                    "geometry": {"type": "Polygon", "coordinates": [ring]},
+                    "properties": {"geometry_source": AOI_GEOMETRY_SOURCE},
+                    "geometry": geometry,
                 }
             ],
         }
@@ -106,6 +101,21 @@ class StagingArea:
             output,
             category="aoi",
             provider="user-selection",
-            dataset="bounding-box",
+            dataset="study-area-polygon",
         )
         return output
+
+
+# Reject malformed request data before it becomes the workspace's authoritative AOI.
+def _validate_aoi_geometry(geometry: dict) -> None:
+    if not isinstance(geometry, dict) or geometry.get("type") != "Polygon":
+        raise ValueError("AOI geometry must be a GeoJSON Polygon")
+    rings = geometry.get("coordinates")
+    if not isinstance(rings, list) or not rings or not isinstance(rings[0], list) or len(rings[0]) < 4:
+        raise ValueError("AOI polygon must contain a closed exterior ring")
+    exterior = rings[0]
+    if exterior[0] != exterior[-1]:
+        raise ValueError("AOI polygon exterior ring must be closed")
+    for point in exterior:
+        if not isinstance(point, list) or len(point) < 2 or not all(isinstance(value, (int, float)) for value in point[:2]):
+            raise ValueError("AOI polygon coordinates must be numeric longitude/latitude pairs")

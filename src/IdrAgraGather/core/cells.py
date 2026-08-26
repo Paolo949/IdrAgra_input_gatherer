@@ -18,7 +18,6 @@ from .landuses import (
     write_configuration,
 )
 from .manifest import Manifest
-from .models import BoundingBox
 from .vector_clip import aoi_geometry
 
 
@@ -99,7 +98,6 @@ def build_simulation_cells(
     grid_boundary_policy: str = "inside",
     elevation_method: str = "median",
     slope_method: str = "dominant",
-    bbox: BoundingBox | None = None,
     soil_path: str | Path | None = None,
     landuse_path: str | Path | None = None,
     elevation_path: str | Path | None = None,
@@ -134,9 +132,6 @@ def build_simulation_cells(
     ):
         if not path.is_file():
             raise ValueError(f"Required {label} input does not exist: {path}")
-    if bbox is None:
-        bbox = _read_workspace_bbox(root)
-
     try:
         from osgeo import gdal, ogr, osr
     except ImportError as exc:
@@ -155,7 +150,7 @@ def build_simulation_cells(
     landuse_features = _read_features(landuse_path, "landuse", elevation.spatial_reference, ogr, osr)
     source_classes = sorted({str(value) for value, _ in landuse_features})
     validate_allocations(allocations, landuses, source_classes=source_classes)
-    aoi = aoi_geometry(bbox, elevation.spatial_reference, ogr, osr)
+    aoi = aoi_geometry(root / "aoi.geojson", elevation.spatial_reference, ogr, osr)
 
     if mode == "grid":
         if on_status:
@@ -324,6 +319,7 @@ def build_simulation_cells(
         "landuse_source": str(landuse_path),
         "elevation_source": str(elevation_path),
         "slope_source": str(slope_path),
+        "aoi_geometry": str(root / "aoi.geojson"),
         "cell_count": len(cells),
         "warnings": warnings,
     }
@@ -600,23 +596,6 @@ class _RasterSampler:
     def close(self):
         self.band = None
         self.dataset = None
-
-
-def _read_workspace_bbox(root: Path) -> BoundingBox:
-    manifest_path = root / "manifest.json"
-    if not manifest_path.is_file():
-        raise ValueError("The workspace manifest has no study-area definition.")
-    data = json.loads(manifest_path.read_text(encoding="utf-8"))
-    aoi = data.get("aoi") or {}
-    try:
-        return BoundingBox(
-            float(aoi["west"]),
-            float(aoi["south"]),
-            float(aoi["east"]),
-            float(aoi["north"]),
-        )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("The workspace manifest has no valid EPSG:4326 AOI.") from exc
 
 
 def _read_features(path, field_name, target_srs, ogr, osr, *, integer=False):

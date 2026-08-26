@@ -9,6 +9,7 @@ from IdrAgraGather.core.corine_normalize import (
     normalize_corine_file,
 )
 from IdrAgraGather.core.models import BoundingBox
+from IdrAgraGather.core.staging import StagingArea
 
 
 class CorineNormalizeTests(unittest.TestCase):
@@ -78,6 +79,13 @@ class CorineNormalizeTests(unittest.TestCase):
             source.parent.mkdir(parents=True)
             source.write_text(json.dumps(collection), encoding="utf-8")
             clip = BoundingBox(9.05, 45.01, 9.25, 45.08)
+            StagingArea(temporary).write_aoi(
+                clip,
+                geometry={
+                    "type": "Polygon",
+                    "coordinates": [[[9.05, 45.01], [9.25, 45.01], [9.25, 45.08], [9.05, 45.08], [9.05, 45.01]]],
+                },
+            )
             result = normalize_corine_file(source, temporary, bbox=clip)
 
             self.assertEqual(result.path, Path(temporary) / "landuse" / "landuse.shp")

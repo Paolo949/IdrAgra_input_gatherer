@@ -7,6 +7,7 @@ from pathlib import Path
 from IdrAgraGather.core.cells import build_simulation_cells
 from IdrAgraGather.core.landuses import LandUseAllocation, LandUseDefinition
 from IdrAgraGather.core.models import BoundingBox
+from IdrAgraGather.core.staging import StagingArea
 from IdrAgraGather.core.vector_clip import aoi_geometry
 
 try:
@@ -26,7 +27,14 @@ class CellGenerationTests(unittest.TestCase):
                 (root / name).mkdir()
             spatial_reference = osr.SpatialReference()
             spatial_reference.ImportFromEPSG(32632)
-            aoi = aoi_geometry(bbox, spatial_reference, ogr, osr)
+            aoi_path = StagingArea(root).write_aoi(
+                bbox,
+                geometry={
+                    "type": "Polygon",
+                    "coordinates": [[[9.0, 45.0], [9.02, 45.0], [9.02, 45.02], [9.0, 45.02], [9.0, 45.0]]],
+                },
+            )
+            aoi = aoi_geometry(aoi_path, spatial_reference, ogr, osr)
             min_x, max_x, min_y, max_y = aoi.GetEnvelope()
             resolution = 100.0
             left = math.floor(min_x / resolution) * resolution
@@ -83,7 +91,6 @@ class CellGenerationTests(unittest.TestCase):
                 landuses=landuses,
                 allocations=allocations,
                 cell_width_m=500.0,
-                bbox=bbox,
             )
             self.assertGreater(grid.cell_count, 0)
             self.assertEqual(len(grid.raster_paths), 4)
@@ -108,7 +115,6 @@ class CellGenerationTests(unittest.TestCase):
                 allocations=allocations,
                 cell_width_m=500.0,
                 grid_boundary_policy="intersect",
-                bbox=bbox,
             )
             self.assertGreater(crossing_grid.cell_count, grid.cell_count)
             crossing_cells = ogr.Open(str(crossing_grid.cells_path), 0)
@@ -135,7 +141,6 @@ class CellGenerationTests(unittest.TestCase):
                 landuses=landuses,
                 allocations=allocations,
                 cell_width_m=50.0,
-                bbox=bbox,
             )
             fine_cells = ogr.Open(str(fine_grid.cells_path), 0)
             fine_layer = fine_cells.GetLayerByName("simulation_cells")
@@ -151,7 +156,6 @@ class CellGenerationTests(unittest.TestCase):
                 crops=[],
                 landuses=landuses,
                 allocations=allocations,
-                bbox=bbox,
             )
             self.assertEqual(vector.cell_count, 2)
             self.assertEqual(vector.raster_paths, ())

@@ -1,7 +1,6 @@
 import calendar
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
-import math
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -69,6 +68,11 @@ def fetch(
     destination_dir.mkdir(parents=True, exist_ok=True)
     manifest = Manifest(root)
     manifest.configure(aoi=bbox.as_dict(), date_window=window.as_dict())
+    recorded_assets = {
+        root / asset["path"]: asset
+        for asset in manifest.read().get("assets", [])
+        if asset.get("provider") == "copernicus-cds" and Path(asset["path"]).suffix == ".nc"
+    }
 
     outputs: dict[int, Path] = {}
     jobs = plan_jobs(bbox, window)
@@ -77,7 +81,15 @@ def fetch(
         if is_cancelled is not None and is_cancelled():
             break
         destination = destination_dir / job.target_name
-        if destination.exists() and destination.stat().st_size > 0 and not overwrite:
+        recorded = recorded_assets.get(destination)
+        reusable = (
+            destination.exists()
+            and destination.stat().st_size > 0
+            and not overwrite
+            and recorded is not None
+            and recorded.get("request") == job.request
+        )
+        if reusable:
             outputs[index] = destination
             manifest.add_asset(
                 destination,
@@ -116,7 +128,11 @@ def fetch(
                 )
                 if on_progress is not None:
                     on_progress(len(outputs), len(jobs), destination)
-    return [outputs[index] for index in sorted(outputs)]
+    ordered_outputs = [outputs[index] for index in sorted(outputs)]
+    if len(ordered_outputs) == len(jobs):
+        current_outputs = set(ordered_outputs)
+        manifest.remove_assets(path for path in recorded_assets if path not in current_outputs)
+    return ordered_outputs
 
 
 # Download one monthly job without mutating shared manifest state.
@@ -205,7 +221,7 @@ def plan_jobs(
     if not selected_variables:
         raise ValueError("at least one variable is required")
 
-    request_bbox = _snap_bbox_outward(bbox, GRID_DEGREES)
+    request_bbox = _buffer_bbox(bbox, GRID_DEGREES)
     jobs: list[Era5Job] = []
     for year, month in _months(window.start, window.end):
         first = max(window.start, date(year, month, 1))
@@ -218,8 +234,8 @@ def plan_jobs(
             "day": days,
             "time": list(TIMES),
             # CDS uses north, west, south, east.
-            # Snap outward to the native grid so even a very small AOI contains
-            # at least one grid point. The original AOI remains in the manifest.
+            # One grid spacing around the AOI includes the nearest centroid
+            # beyond every edge. The original AOI remains in the manifest.
             "area": [
                 request_bbox.north,
                 request_bbox.west,
@@ -243,21 +259,13 @@ def _months(start: date, end: date):
             month += 1
 
 
-# Return a grid-aligned request extent that fully contains *bbox*.
-def _snap_bbox_outward(bbox: BoundingBox, grid: float) -> BoundingBox:
+# Expand the AOI by one grid spacing so the request includes a centroid beyond every side.
+def _buffer_bbox(bbox: BoundingBox, grid: float) -> BoundingBox:
     if grid <= 0:
         raise ValueError("grid spacing must be positive")
-
-    # Rounding removes binary floating-point noise from values such as 46.2.
-    precision = max(0, int(round(-math.log10(grid))))
-    west = round(math.floor((bbox.west + 1e-12) / grid) * grid, precision)
-    south = round(math.floor((bbox.south + 1e-12) / grid) * grid, precision)
-    east = round(math.ceil((bbox.east - 1e-12) / grid) * grid, precision)
-    north = round(math.ceil((bbox.north - 1e-12) / grid) * grid, precision)
-
-    # A zero-width/height grid-aligned AOI still needs one cell of coverage.
-    if east <= west:
-        east = round(west + grid, precision)
-    if north <= south:
-        north = round(south + grid, precision)
-    return BoundingBox(west, south, east, north)
+    return BoundingBox(
+        max(-180.0, round(bbox.west - grid, 12)),
+        max(-90.0, round(bbox.south - grid, 12)),
+        min(180.0, round(bbox.east + grid, 12)),
+        min(90.0, round(bbox.north + grid, 12)),
+    )

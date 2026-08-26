@@ -1,4 +1,5 @@
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -77,7 +78,7 @@ def _run_acquisition(task, request):
     bbox = BoundingBox(*request["bbox"])
     window = DateWindow.from_iso(request["start"], request["end"])
     staging = StagingArea(request["output"])
-    aoi_path = staging.write_aoi(bbox)
+    aoi_path = staging.write_aoi(bbox, geometry=request["aoi_geometry"])
     outputs = [aoi_path]
     load_paths = [aoi_path]
     task.setProgress(5)
@@ -854,8 +855,14 @@ class IdrAgraGatherPlugin:
         bbox = geometry.boundingBox()
         dialog = self.dialog
         if dialog is not None:
-            dialog.set_bbox(bbox.xMinimum(), bbox.yMinimum(), bbox.xMaximum(), bbox.yMaximum())
-            dialog.append_log("Study area selected in EPSG:4326.")
+            dialog.set_bbox(
+                bbox.xMinimum(),
+                bbox.yMinimum(),
+                bbox.xMaximum(),
+                bbox.yMaximum(),
+                geometry=json.loads(geometry.asJson()),
+            )
+            dialog.append_log("Exact study-area polygon retained; its EPSG:4326 envelope will be used for acquisition.")
 
     def _run(self, action):
         if self.task is not None:

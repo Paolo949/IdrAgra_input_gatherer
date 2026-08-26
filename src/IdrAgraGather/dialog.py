@@ -86,6 +86,7 @@ class AcquisitionDialog(QDialog):
 
         # Creates the dialog window
         self._bbox = None
+        self._aoi_geometry = None
         self.setWindowTitle("IdrAgra input gatherer")
         self.resize(760, 780)
         self.setWindowFlags(self.windowFlags() | WINDOW_TYPE.WindowMinMaxButtonsHint)
@@ -411,8 +412,9 @@ class AcquisitionDialog(QDialog):
         layout.addWidget(self.load_results, 2, 1, 1, 2)
         return group
 
-    def set_bbox(self, west, south, east, north):
+    def set_bbox(self, west, south, east, north, *, geometry=None):
         self._bbox = [float(west), float(south), float(east), float(north)]
+        self._aoi_geometry = geometry
         self.aoi_text.setText(f"{west:.6f}, {south:.6f}, {east:.6f}, {north:.6f}")
 
     def set_output_folder(self, path):
@@ -484,6 +486,7 @@ class AcquisitionDialog(QDialog):
 
         return {
             "bbox": list(self._bbox),
+            "aoi_geometry": self._aoi_geometry,
             "start": self.start_date.date().toString("yyyy-MM-dd"),
             "end": self.end_date.date().toString("yyyy-MM-dd"),
             "weather_source": weather_source,

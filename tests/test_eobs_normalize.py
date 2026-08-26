@@ -100,6 +100,15 @@ class EobsNormalizeTests(unittest.TestCase):
         np.testing.assert_array_equal(rows, np.array([1, 2]))
         np.testing.assert_array_equal(columns, np.array([1, 2, 3]))
 
+    def test_offset_eobs_grid_selects_a_centroid_beyond_every_aoi_side(self):
+        rows, columns = _spatial_indices(
+            np.array([46.049861, 46.149861, 46.249861]),
+            np.array([9.44986, 9.54986, 9.64986, 9.74986]),
+            BoundingBox(9.542122902684207, 46.128126345856906, 9.61140902671259, 46.14711090817001),
+        )
+        np.testing.assert_array_equal(rows, np.array([0, 1]))
+        np.testing.assert_array_equal(columns, np.array([0, 1, 2]))
+
     def test_spatial_buffer_stops_at_available_dataset_edges(self):
         rows, columns = _spatial_indices(
             np.array([46.0, 46.1]),
