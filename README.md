@@ -121,8 +121,9 @@ sampling/interpolation rules are known.
 - an IdrAgra v2 exporter for static land use, Mode 0 (rain-fed), internally
   initialized soil moisture, and disabled capillary rise. It aggregates the six
   normalized horizons to v2's two layers, converts Ksat from canonical mm/h to
-  v2 cm/h, derives v2's Brooks-Corey `N`, writes weather station/IDW inputs, and
-  records every transformation in `export_provenance.json`;
+  v2 cm/h, derives v2's Brooks-Corey `N`, writes legacy texture-class
+  capillary-rise parameters and weather station/IDW inputs, and records every
+  transformation in `export_provenance.json`;
 - AOI-filtered CORINE Land Cover 2018 vector acquisition from the EEA ArcGIS
   REST service, retaining the published `Code_18` classification;
 - CORINE normalization into an AOI-clipped minimal `landuse.shp`, categorized
@@ -213,6 +214,7 @@ study_inputs/
     geodata/*.asc
     meteodata/station_*.dat
     landuses/soil_uses.txt
+    landuses/crop_parameters/*.tab
     export_provenance.json
 ```
 

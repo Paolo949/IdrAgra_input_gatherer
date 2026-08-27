@@ -23,7 +23,7 @@ class LandUseConfigurationTests(unittest.TestCase):
                 "1\twheat.tab\t*\t# Wheat\n"
                 "2\twheat.tab\tmaize.tab\t# Wheat -> maize\n"
                 "3\t*\t*\t# Non-agricultural\n"
-                "endTable\n",
+                "endTable =\n",
                 encoding="utf-8",
             )
             crops, landuses = parse_idragra_landuses(path)

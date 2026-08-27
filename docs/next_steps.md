@@ -71,9 +71,10 @@ Each increment should stay usable without the later ones.
      inverse-distance weight maps are generated from grid cells;
    - canonical Ksat is converted to v2 cm/h and v2 Brooks-Corey `N` is derived
      with the legacy IdrAgraTools equation;
-   - static rain-fed/no-capillary-rise parameters and provenance are written;
+   - legacy texture-class capillary-rise parameter grids and provenance are
+     written, while capillary uptake remains disabled pending water-table input;
    - CropCoef rotations are exported, while its phenology run remains an
      explicit prerequisite;
    - next: operational irrigation, annual land-use variation, water-table and
-     capillary-rise inputs, then v3 cell-ordered weather and parameter files;
+     capillary activation, then v3 cell-ordered weather and parameter files;
    - add integration fixtures accepted by the v2 and v3 executables/parsers.

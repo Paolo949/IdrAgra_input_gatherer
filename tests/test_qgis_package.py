@@ -46,7 +46,7 @@ class QgisPackageTests(unittest.TestCase):
             self.assertIn("IdrAgraGather/core/soilgrids_normalize.py", names)
             self.assertIn("qgisMinimumVersion=3.28", metadata)
             self.assertIn("qgisMaximumVersion=4.99", metadata)
-            self.assertIn("version=0.15.0", metadata)
+            self.assertIn("version=0.16.1", metadata)
             self.assertFalse(any("__pycache__" in name or name.endswith(".pyc") for name in names))
 
     def test_qgis4_removed_enum_aliases_are_not_used(self):
@@ -158,7 +158,10 @@ class QgisPackageTests(unittest.TestCase):
         self.assertIn("Available but unused", ptf_dialog)
         self.assertIn("Export IdrAgra v2 inputs", plugin)
         self.assertIn("static, rain-fed", export_dialog)
-        self.assertIn("Not generated: phenology series", export_dialog)
+        self.assertNotIn("Not generated: phenology series", export_dialog)
+        self.assertIn('on_status(f"Writing {relative}...")', (
+            plugin_root / "core" / "v2_export.py"
+        ).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

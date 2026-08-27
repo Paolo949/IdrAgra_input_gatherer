@@ -18,6 +18,12 @@ from .manifest import Manifest
 NODATA = -9999.0
 WEATHER_FIELDS = ("tmax_c", "tmin_c", "precip_mm", "rhmax_pct", "rhmin_pct", "wind2m_m_s", "solar_rad_mj_m2_day")
 HYDRAULIC_FIELDS = ("ksat_mm_h", "theta_fc", "theta_wp", "theta_res", "theta_sat")
+TEXTURE_FIELDS = ("sand_pct", "silt_pct", "clay_pct")
+CAPILLARY_PARAMETERS = {
+    101: {"b1": -0.16, "b2": -0.54, "a3": -0.15, "b3": 2.1, "a4": 7.55, "b4": -2.03},
+    102: {"b1": -0.17, "b2": -0.27, "a3": -1.3, "b3": 6.6, "a4": 4.6, "b4": -0.65},
+    103: {"b1": -0.32, "b2": -0.16, "a3": -1.4, "b3": 6.8, "a4": 1.11, "b4": -0.98},
+}
 
 
 @dataclass(frozen=True)
@@ -51,10 +57,7 @@ class _Station:
     rows: tuple[tuple[date, tuple[float, ...]], ...]
 
 
-# Create a conservative, static/rain-fed IdrAgra v2 package.
-#
-# Phenology is deliberately not synthesized. The package includes CropCoef-ready
-# crop rotations and a parameter template documenting the missing phenology step.
+# Export the normalized workspace to IdrAgra v2 input conventions and return a summary of the export.
 def export_v2_workspace(
     workspace: str | Path,
     destination: str | Path,
@@ -77,6 +80,8 @@ def export_v2_workspace(
             raise ValueError("Exports stored inside the workspace must be below its 'exports' folder.")
     if destination.exists() and not destination.is_dir():
         raise ValueError(f"Export destination is not a folder: {destination}")
+
+    # Ensure that we have the required data
     required = {
         "soil grid": root / "cells" / "soil_id.tif",
         "land-use grid": root / "cells" / "landuse_id.tif",
@@ -113,17 +118,22 @@ def export_v2_workspace(
     crops, landuses, _allocations = read_configuration(required["land-use configuration"])
     landuse_by_id = {item.landuse_id: item for item in landuses}
     configured_ids = set(landuse_by_id)
-    present_ids = {int(value) for value in np.unique(landuse_grid.values) if value != landuse_grid.nodata}
-    unknown = sorted(present_ids - configured_ids)
+    grid_landuse_ids = {int(value) for value in np.unique(landuse_grid.values) if value != landuse_grid.nodata}
+    cell_landuse_ids = _read_cell_landuse_ids(required["cell view"], ogr)
+    unknown = sorted((grid_landuse_ids | cell_landuse_ids) - configured_ids)
     if unknown:
-        raise ValueError(f"Cell grid refers to undefined land-use ID(s): {unknown}")
-    active_ids = tuple(sorted(item.landuse_id for item in landuses if item.crop1_id))
+        raise ValueError(f"Simulation cells refer to undefined land-use ID(s): {unknown}")
+    active_ids = tuple(sorted(
+        landuse_id for landuse_id in cell_landuse_ids
+        if landuse_by_id[landuse_id].crop1_id
+    ))
     if not active_ids:
         raise ValueError("No crop-bearing land-use cells are available for v2 export.")
-    if set(active_ids) != set(range(1, max(active_ids) + 1)):
-        raise ValueError(
-            "Active v2 land-use IDs must be contiguous and start at 1; edit the cell-builder catalogue before exporting."
-        )
+    exported_id_by_landuse = {
+        landuse_id: exported_id
+        for exported_id, landuse_id in enumerate(active_ids, start=1)
+    }
+    exported_ids = tuple(exported_id_by_landuse.values())
     mask = np.isin(landuse_grid.values, active_ids) & (soil_grid.values != soil_grid.nodata)
     if not np.any(mask):
         raise ValueError("No cells remain after excluding non-simulated land uses.")
@@ -143,7 +153,6 @@ def export_v2_workspace(
         raise ValueError(f"PTF output is missing soil profile ID(s): {absent_profiles}")
 
     staging = destination.with_name(destination.name + ".tmp-idragather")
-    backup = destination.with_name(destination.name + ".previous-idragather")
     _remove_tree(staging)
     staging.mkdir(parents=True)
     warnings: list[str] = []
@@ -158,11 +167,24 @@ def export_v2_workspace(
         landuse_output.mkdir()
         irrigation_output.mkdir()
         pheno_output.mkdir()
+
+        def announce_write(path):
+            if on_status:
+                relative = Path(path).relative_to(staging).as_posix()
+                on_status(f"Writing {relative}...")
+
+        def write_ascii(path, values, **kwargs):
+            announce_write(path)
+            _write_ascii(path, values, **kwargs)
+
         grid_kwargs = dict(geotransform=soil_grid.geotransform, nodata=NODATA)
-        _write_ascii(geodata / "domain.asc", np.where(mask, 1, NODATA), **grid_kwargs)
-        _write_ascii(geodata / "soiluse.asc", np.where(mask, landuse_grid.values, NODATA), integer=True, **grid_kwargs)
-        _write_ascii(geodata / "slope.asc", np.where(mask, slope_grid.values, NODATA), **grid_kwargs)
-        _write_ascii(geodata / "hydr_cond.asc", np.where(mask, hydrologic_condition, NODATA), integer=True, **grid_kwargs)
+        write_ascii(geodata / "domain.asc", np.where(mask, 1, NODATA), integer=True, **grid_kwargs)
+        exported_landuses = np.full(landuse_grid.values.shape, NODATA, dtype=float)
+        for landuse_id, exported_id in exported_id_by_landuse.items():
+            exported_landuses[mask & (landuse_grid.values == landuse_id)] = exported_id
+        write_ascii(geodata / "soiluse.asc", exported_landuses, integer=True, **grid_kwargs)
+        write_ascii(geodata / "slope.asc", np.where(mask, slope_grid.values, NODATA), **grid_kwargs)
+        write_ascii(geodata / "hydr_cond.asc", np.where(mask, hydrologic_condition, NODATA), integer=True, **grid_kwargs)
 
         layer_maps = {
             name: []
@@ -196,57 +218,59 @@ def export_v2_workspace(
                 if field == "ksat_mm_h":
                     # IdrAgra v2 consumes Ksat in cm/h; canonical PTF output is mm/h.
                     layer_maps[name][mask] /= 10.0
-                _write_ascii(geodata / f"{name}.asc", layer_maps[name], **grid_kwargs)
+                write_ascii(geodata / f"{name}.asc", layer_maps[name], **grid_kwargs)
         hsg = _hydrologic_group_grid(soil_grid.values, mask, profiles, np)
-        _write_ascii(geodata / "hydr_group.asc", hsg, integer=True, **grid_kwargs)
+        write_ascii(geodata / "hydr_group.asc", hsg, integer=True, **grid_kwargs)
+        capillary_by_profile = {
+            profile_id: capillary_rise_parameters(rows, evap_layer_m + root_layer_m)
+            for profile_id, rows in profiles.items()
+        }
+        for parameter in ("a3", "a4", "b1", "b2", "b3", "b4"):
+            values = _simple_profile_lookup_grid(
+                soil_grid.values, mask, capillary_by_profile, parameter, np
+            )
+            write_ascii(geodata / f"CapRisePar_{parameter}.asc", values, **grid_kwargs)
 
-        if on_status:
-            on_status("Writing v2 station series and inverse-distance weight grids.")
         stations, start, end = _read_weather_stations(required["weather"], soil_grid, elevation_grid, ogr, osr)
         for station in stations:
+            announce_write(meteodata / station.filename)
             _write_station_file(meteodata / station.filename, station, start, end)
+        announce_write(staging / "weather_stations.dat")
         _write_station_list(staging / "weather_stations.dat", stations)
         weight_count = 2 if len(stations) == 1 else min(weather_neighbors, len(stations))
         weights = _weather_weight_grids(soil_grid, mask, stations, weight_count, np)
         for index, values in enumerate(weights, start=1):
-            _write_ascii(geodata / f"meteo_{index}.asc", values, decimals=9, **grid_kwargs)
+            write_ascii(geodata / f"meteo_{index}.asc", values, decimals=9, **grid_kwargs)
 
         _write_landuses(
             landuse_output,
-            root,
             crops,
             landuses,
             active_ids,
+            exported_id_by_landuse,
             Path(crop_parameter_folder).resolve() if crop_parameter_folder else None,
             warnings,
+            on_write=announce_write,
         )
-        # Required by v2 even when no rice is simulated. A spatial median is a
-        # neutral profile-derived value, not a rice-specific calibration.
-        median_second = {
-            field: float(np.median([profile_layers[p][1][field] for p in used_profiles]))
-            for field in (*HYDRAULIC_FIELDS, "v2_brooks_corey_n")
-        }
-        _write_rice_file(geodata / "rice_soilparam.txt", median_second)
-        warnings.append(
-            "rice_soilparam.txt uses the spatial median second-layer soil values; "
-            "replace it with calibrated rice parameters before simulating rice."
-        )
+        announce_write(staging / "idragra_parameters.txt")
         _write_parameter_template(
             staging / "idragra_parameters.txt",
             start,
             end,
             stations,
             weight_count,
-            active_ids,
+            exported_ids,
             evap_layer_m,
             root_layer_m,
             profile_layers,
             np,
         )
+        announce_write(irrigation_output / "irrmethods.txt")
         (irrigation_output / "irrmethods.txt").write_text(
             "# Parser stub for Mode 0; no operational irrigation methods.\nIrrMethNum = 0\nList =\nEndList =\n",
             encoding="ascii",
         )
+        announce_write(pheno_output / "README.txt")
         (pheno_output / "README.txt").write_text(
             "Run CropCoef for every exported station and place its pheno_station_NNN "
             "directory here. IdrAgra v2 cannot run without those daily crop series.\n",
@@ -257,7 +281,8 @@ def export_v2_workspace(
         )
         warnings.append(
             "This first contract is static land use, Mode 0 (rain-fed), and capillary "
-            "rise disabled; irrigation, yearly land-use, and water-table inputs are omitted."
+            "rise disabled. Texture-derived capillary parameter grids are included, but "
+            "irrigation, yearly land-use, and water-table inputs are omitted."
         )
         provenance = {
             "schema_version": 1,
@@ -272,23 +297,37 @@ def export_v2_workspace(
                 "water_contents": "thickness-weighted arithmetic mean",
                 "N": "legacy IdrAgraTools Brooks-Corey drainage exponent; reference conductivity 0.2 mm/day",
             },
+            "capillary_rise": {
+                "model": "Liu et al. (2006) parameters reproduced from IdrAgraTools",
+                "representative_texture": "legacy depth-weighted horizon rank below the modeled root zone to profile bottom",
+                "usda_macro_classes": {
+                    "101": "sand, loamy sand, sandy loam",
+                    "102": "loam, silt loam, silt",
+                    "103": "sandy clay loam, clay loam, silty clay loam, sandy clay, silty clay, clay",
+                },
+                "coefficients": CAPILLARY_PARAMETERS,
+                "enabled_in_template": False,
+                "reason_disabled": "water-table depth is not yet part of the normalized workspace",
+            },
             "weather_weights": "nearest stations, normalized inverse planar distance; encoded as station_id + fractional_weight",
-            "excluded_landuses": sorted(present_ids - set(active_ids)),
+            "excluded_landuses": sorted(cell_landuse_ids - set(active_ids)),
+            "landuse_id_mapping": {
+                str(source_id): exported_id
+                for source_id, exported_id in exported_id_by_landuse.items()
+            },
             "warnings": warnings,
         }
+        announce_write(staging / "export_provenance.json")
         (staging / "export_provenance.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+        announce_write(staging / "README_EXPORT.txt")
         (staging / "README_EXPORT.txt").write_text(
             "IdrAgra v2 export\n\n" + "\n".join(f"- {item}" for item in warnings) + "\n", encoding="utf-8"
         )
         if destination.exists():
-            _remove_tree(backup)
-            destination.replace(backup)
+            _remove_tree(destination)
         staging.replace(destination)
-        _remove_tree(backup)
     except Exception:
         _remove_tree(staging)
-        if backup.exists() and not destination.exists():
-            backup.replace(destination)
         raise
 
     files = tuple(path for path in destination.rglob("*") if path.is_file())
@@ -368,6 +407,102 @@ def aggregate_profile_layers(
     return tuple(result)
 
 
+def usda_texture_class(sand_pct: float, silt_pct: float, clay_pct: float) -> int:
+    """Return the legacy 1-12 USDA texture code from fine-earth percentages."""
+
+    sand, silt, clay = (float(sand_pct), float(silt_pct), float(clay_pct))
+    if any(not math.isfinite(value) or value < 0 for value in (sand, silt, clay)):
+        raise ValueError("USDA texture fractions must be finite and non-negative.")
+    total = sand + silt + clay
+    if not 99.0 <= total <= 101.0:
+        raise ValueError("USDA texture fractions must sum to 99-101 percent.")
+    sand, silt, clay = (100.0 * value / total for value in (sand, silt, clay))
+
+    # Ordered boundary rules follow the USDA textural triangle; returned codes
+    # match IdrAgraTools' texture_code.csv.
+    if silt >= 80 and clay < 12:
+        return 6  # silt
+    if clay >= 40 and silt >= 40:
+        return 11  # silty clay
+    if clay >= 35 and sand >= 45:
+        return 10  # sandy clay
+    if clay >= 40:
+        return 12  # clay
+    if 27 <= clay < 40 and silt >= 40 and sand <= 20:
+        return 9  # silty clay loam
+    if 27 <= clay < 40 and 20 < sand <= 45:
+        return 8  # clay loam
+    if 20 <= clay < 35 and sand > 45 and silt < 28:
+        return 7  # sandy clay loam
+    if silt >= 50 and clay < 27:
+        return 5  # silt loam
+    if 7 <= clay < 27 and 28 <= silt < 50 and sand <= 52:
+        return 4  # loam
+    if (
+        (7 <= clay < 20 and sand > 52 and silt + 2 * clay >= 30)
+        or (clay < 7 and silt < 50 and silt + 2 * clay >= 30)
+    ):
+        return 3  # sandy loam
+    if sand >= 70 and silt + 1.5 * clay >= 15 and silt + 2 * clay < 30:
+        return 2  # loamy sand
+    if sand >= 85 and silt + 1.5 * clay < 15:
+        return 1  # sand
+    # Boundary points not captured above belong to the adjacent loam class.
+    return 4
+
+
+def capillary_rise_parameters(
+    horizons: Sequence[dict[str, float]], modeled_depth_m: float
+) -> dict[str, float | int]:
+    """Reproduce IdrAgraTools' below-root texture selection and Liu parameters."""
+
+    if not horizons:
+        raise ValueError("A soil profile has no texture horizons.")
+    ordered = sorted(horizons, key=lambda row: float(row["bottom_cm"]))
+    profile_bottom = max(float(row["bottom_cm"]) / 100.0 for row in ordered)
+    if modeled_depth_m < 0 or modeled_depth_m > profile_bottom + 1e-9:
+        raise ValueError("Modeled depth must fall within the soil profile.")
+    weights = []
+    for row in ordered:
+        top = float(row["top_cm"]) / 100.0
+        bottom = float(row["bottom_cm"]) / 100.0
+        weights.append(max(0.0, min(bottom, profile_bottom) - max(top, modeled_depth_m)))
+    if sum(weights) > 0:
+        weighted_rank = sum(index * weight for index, weight in enumerate(weights)) / sum(weights)
+        selected_index = int(round(weighted_rank))
+    else:
+        selected_index = len(ordered) - 1
+    selected = ordered[selected_index]
+    texture_code = usda_texture_class(*(selected[field] for field in TEXTURE_FIELDS))
+    macro_class = 101 if texture_code <= 3 else 102 if texture_code <= 6 else 103
+    return {
+        "usda_texture_code": texture_code,
+        "macro_texture_class": macro_class,
+        **CAPILLARY_PARAMETERS[macro_class],
+    }
+
+
+def _read_cell_landuse_ids(path, ogr):
+    database = ogr.Open(str(path))
+    layer = database.GetLayerByName("simulation_cells") if database else None
+    if layer is None:
+        raise ValueError(f"Missing simulation_cells layer in {path}")
+    definition = layer.GetLayerDefn()
+    fields = {
+        definition.GetFieldDefn(index).GetName()
+        for index in range(definition.GetFieldCount())
+    }
+    if "landuse_id" not in fields:
+        raise ValueError(f"Simulation cells layer has no landuse_id field: {path}")
+    identifiers = {
+        int(feature.GetField("landuse_id"))
+        for feature in layer
+        if feature.IsFieldSetAndNotNull("landuse_id")
+    }
+    layer = database = None
+    return identifiers
+
+
 def _read_grid(path, gdal):
     dataset = gdal.Open(str(path))
     if dataset is None:
@@ -403,7 +538,9 @@ def _read_hydraulic_profiles(path, ogr):
     metadata_layer = database.GetLayerByName("soil_hydraulic_metadata") if database else None
     if layer is None:
         raise ValueError(f"Missing soil_hydraulic_layers table in {path}")
-    required = {"profile_id", "top_cm", "bottom_cm", *HYDRAULIC_FIELDS}
+    required = {
+        "profile_id", "top_cm", "bottom_cm", *HYDRAULIC_FIELDS, *TEXTURE_FIELDS
+    }
     fields = {layer.GetLayerDefn().GetFieldDefn(i).GetName() for i in range(layer.GetLayerDefn().GetFieldCount())}
     if missing := sorted(required - fields):
         raise ValueError(f"Hydraulic table is missing field(s): {missing}")
@@ -426,6 +563,13 @@ def _profile_lookup_grid(ids, mask, profiles, layer_index, field, np):
     result = np.full(ids.shape, NODATA, dtype=float)
     for profile_id in np.unique(ids[mask]):
         result[mask & (ids == profile_id)] = profiles[int(profile_id)][layer_index][field]
+    return result
+
+
+def _simple_profile_lookup_grid(ids, mask, profiles, field, np):
+    result = np.full(ids.shape, NODATA, dtype=float)
+    for profile_id in np.unique(ids[mask]):
+        result[mask & (ids == profile_id)] = profiles[int(profile_id)][field]
     return result
 
 
@@ -588,11 +732,17 @@ def _write_station_list(path, stations):
         stream.write(f"StatNum = {len(stations)}\nTable =\nFileName X Y\n")
         for station in stations:
             stream.write(f"{station.filename} {station.x:.3f} {station.y:.3f}\n")
-        stream.write("endTable\n")
+        stream.write("endTable =\n")
 
 
-def _write_landuses(output, root, crops, landuses, active_ids, explicit_folder, warnings):
+def _write_landuses(
+    output, crops, landuses, active_ids, exported_id_by_landuse, source_folder, warnings, *, on_write=None,
+):
     crop_by_id = {item.crop_id: item for item in crops}
+    crop_output = output / "crop_parameters"
+    crop_output.mkdir(exist_ok=True)
+    if on_write:
+        on_write(output / "soil_uses.txt")
     with (output / "soil_uses.txt").open("w", encoding="utf-8", newline="\n") as stream:
         stream.write("Cr_ID\tCrop1\tCrop2\t# Comments\n")
         for item in sorted(landuses, key=lambda value: value.landuse_id):
@@ -600,8 +750,9 @@ def _write_landuses(output, root, crops, landuses, active_ids, explicit_folder, 
                 continue
             crop1 = crop_by_id[item.crop1_id].parameter_file
             crop2 = crop_by_id[item.crop2_id].parameter_file if item.crop2_id else "*"
-            stream.write(f"{item.landuse_id}\t{Path(crop1).name}\t{Path(crop2).name}\t# {item.name}\n")
-        stream.write("endTable\n")
+            exported_id = exported_id_by_landuse[item.landuse_id]
+            stream.write(f"{exported_id}\t{Path(crop1).name}\t{Path(crop2).name}\t# {item.name}\n")
+        stream.write("endTable =\n")
     needed = {
         crop_by_id[crop_id].parameter_file
         for item in landuses
@@ -609,7 +760,7 @@ def _write_landuses(output, root, crops, landuses, active_ids, explicit_folder, 
         for crop_id in (item.crop1_id, item.crop2_id)
         if crop_id
     }
-    search_folders = [folder for folder in (explicit_folder, root / "landuses", root / "cells") if folder]
+    search_folders = [source_folder] if source_folder else []
     for reference in sorted(needed):
         source = Path(reference)
         candidates = [source] if source.is_absolute() else [folder / source for folder in search_folders]
@@ -617,18 +768,12 @@ def _write_landuses(output, root, crops, landuses, active_ids, explicit_folder, 
         if found is None:
             warnings.append(f"Crop parameter file was not found and was not copied: {reference}")
         else:
-            shutil.copy2(found, output / source.name)
+            if on_write:
+                on_write(crop_output / source.name)
+            shutil.copy2(found, crop_output / source.name)
 
 
-def _write_rice_file(path, values):
-    path.write_text(
-        f"Ksat_II = {values['ksat_mm_h'] / 10.0:.6f}\nN_II = {values['v2_brooks_corey_n']:.6f}\n"
-        f"ThetaII_FC = {values['theta_fc']:.6f}\nThetaII_r = {values['theta_res']:.6f}\n"
-        f"ThetaII_sat = {values['theta_sat']:.6f}\nThetaII_WP = {values['theta_wp']:.6f}\n",
-        encoding="ascii",
-    )
-
-
+# writes idragra_parameters.txt (todo: doublecheck)
 def _write_parameter_template(path, start, end, stations, weight_count, active_ids, evap, root_layer, profile_layers, np):
     first = np.asarray([layers[0]["ksat_mm_h"] for layers in profile_layers.values()])
     second = np.asarray([layers[1]["ksat_mm_h"] for layers in profile_layers.values()])

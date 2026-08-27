@@ -2,23 +2,23 @@
 
 from pathlib import Path
 
-from qgis.PyQt.QtCore import pyqtSignal  # pyright: ignore[reportAttributeAccessIssue]
-from qgis.PyQt.QtWidgets import (  # pyright: ignore[reportAttributeAccessIssue]
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QDoubleSpinBox,
-    QFileDialog,
-    QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QPlainTextEdit,
-    QPushButton,
-    QSpinBox,
-    QVBoxLayout,
-    QWidget,
+from qgis.PyQt.QtCore import pyqtSignal # pyright: ignore[reportAttributeAccessIssue]
+from qgis.PyQt.QtWidgets import (
+    QComboBox,          # pyright: ignore[reportAttributeAccessIssue]
+    QDialog,            # pyright: ignore[reportAttributeAccessIssue]
+    QDialogButtonBox,   # pyright: ignore[reportAttributeAccessIssue]
+    QDoubleSpinBox,     # pyright: ignore[reportAttributeAccessIssue]
+    QFileDialog,        # pyright: ignore[reportAttributeAccessIssue]
+    QFormLayout,        # pyright: ignore[reportAttributeAccessIssue]
+    QGroupBox,          # pyright: ignore[reportAttributeAccessIssue]
+    QHBoxLayout,        # pyright: ignore[reportAttributeAccessIssue]
+    QLabel,             # pyright: ignore[reportAttributeAccessIssue]
+    QLineEdit,          # pyright: ignore[reportAttributeAccessIssue]
+    QPlainTextEdit,     # pyright: ignore[reportAttributeAccessIssue]
+    QPushButton,        # pyright: ignore[reportAttributeAccessIssue]
+    QSpinBox,           # pyright: ignore[reportAttributeAccessIssue]
+    QVBoxLayout,        # pyright: ignore[reportAttributeAccessIssue]
+    QWidget,            # pyright: ignore[reportAttributeAccessIssue]
 )
 
 
@@ -44,19 +44,6 @@ class V2ExportDialog(QDialog):
         layout.addWidget(self._paths_group())
         layout.addWidget(self._settings_group())
 
-        scope = QLabel(
-            "Generated: domain, static soil use, slope, two-layer soil hydraulic "
-            "grids, Curve Number soil group/condition, weather station series and "
-            "IDW grids, CropCoef rotation files, provenance, and a v2 parameter "
-            "template. A zero-method irrigation parser stub is included for Mode 0."
-            "\n\nNot generated: phenology series, operational irrigation/network "
-            "inputs, yearly land-use maps, water-table depth, or capillary-rise "
-            "parameters. Crop parameter files are copied when their source files "
-            "can be resolved."
-        )
-        scope.setWordWrap(True)
-        scope.setStyleSheet("background: #f4f0dc; border: 1px solid #b8ae76; padding: 8px;")
-        layout.addWidget(scope)
         self.status = QLabel("Choose a gathered-input workspace.")
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -79,7 +66,7 @@ class V2ExportDialog(QDialog):
         self.destination_edit, row = self._folder_row(self._browse_destination)
         layout.addRow("Export folder", row)
         self.crop_folder_edit, row = self._folder_row(self._browse_crop_folder)
-        layout.addRow("Crop parameter folder", row)
+        layout.addRow("Source crop parameters folder", row)
         return group
 
     @staticmethod
@@ -154,7 +141,7 @@ class V2ExportDialog(QDialog):
         self._choose(self.destination_edit, "Choose v2 export folder")
 
     def _browse_crop_folder(self):
-        self._choose(self.crop_folder_edit, "Choose crop parameter folder")
+        self._choose(self.crop_folder_edit, "Choose source crop parameter folder")
 
     def _choose(self, edit, title):
         folder = QFileDialog.getExistingDirectory(self, title, edit.text().strip() or self.workspace_edit.text().strip())
